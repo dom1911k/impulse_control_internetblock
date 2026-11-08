@@ -39,6 +39,36 @@ public sealed class LockRules
 
     public LockRules(TimeZoneInfo? tz = null) => _tz = tz ?? TimeZoneInfo.Local;
 
+    // ================================================================ practice mode
+
+    /// <summary>
+    /// Practice mode: all waiting times are short and play time counts 10× faster, so everything can be
+    /// tried out in a few minutes. Only startable with normal internet; the service undoes its effects afterwards.
+    /// </summary>
+    public bool Practice { get; set; }
+    public const int PracticeSpeed = 10;
+    private int Speed => Practice ? PracticeSpeed : 1;
+
+    public TimingSettings T(NetGuardConfig cfg) => Practice ? PracticeTimings(cfg.Timings) : cfg.Timings;
+
+    public static TimingSettings PracticeTimings(TimingSettings t) => new()
+    {
+        TestModeMinutes = t.TestModeMinutes,
+        HealIntervalSeconds = t.HealIntervalSeconds,
+        CooldownMinutes = 1,
+        ConfirmWindowMinutes = 3,
+        MaxUnlockRequestsPerDay = t.MaxUnlockRequestsPerDay,
+        MinReasonLength = t.MinReasonLength,
+        ConfirmPassageLength = 60,
+        MaintenanceMaxMinutes = 2,
+        MaintenanceReminderDays = t.MaintenanceReminderDays,
+        GraceMinutes = 1,
+        PlanLoosenDelayHours = t.PlanLoosenDelayHours,
+        MaxCommitmentDays = t.MaxCommitmentDays,
+    };
+
+    private TimeSpan PlanDelay(NetGuardConfig cfg) => Practice ? TimeSpan.FromMinutes(2) : TimeSpan.FromHours(cfg.Timings.PlanLoosenDelayHours);
+
     // ================================================================ time helpers
 
     private DateTime Local(DateTimeOffset utc) => TimeZoneInfo.ConvertTime(utc, _tz).DateTime;
@@ -76,7 +106,7 @@ public sealed class LockRules
         {
             if (plan.DailyLimitMinutes is not { } lim) return null;
             var debt = state.Graces.Any(g => g.Profile.Equals(profile.Name, StringComparison.OrdinalIgnoreCase) && g.Date == DateKey(day.AddDays(-1)))
-                ? cfg.Timings.GraceMinutes : 0;
+                ? T(cfg).GraceMinutes : 0;
             return Math.Max(0, lim - debt);
         }
 
@@ -100,8 +130,8 @@ public sealed class LockRules
         {
             reason = "Play time.";
             var end = Utc(today.AddMinutes(window.EndMinute));
-            if (remDaily != int.MaxValue) end = Min(end, now.AddSeconds(remDaily));
-            if (remWeek != int.MaxValue) end = Min(end, now.AddSeconds(remWeek));
+            if (remDaily != int.MaxValue) end = Min(end, now.AddSeconds((double)remDaily / Speed));
+            if (remWeek != int.MaxValue) end = Min(end, now.AddSeconds((double)remWeek / Speed));
             normalEnd = end;
         }
 
@@ -109,7 +139,7 @@ public sealed class LockRules
         var graceActive = grace != null && now < grace.UntilUtc;
         var allowed = normalEnd != null || graceActive;
         DateTimeOffset? ends = graceActive ? Max(normalEnd ?? grace!.UntilUtc, grace!.UntilUtc) : normalEnd;
-        var graceAvailable = grace == null && normalEnd is { } ne && ne - now <= TimeSpan.FromMinutes(15);
+        var graceAvailable = grace == null && normalEnd is { } ne && ne - now <= TimeSpan.FromMinutes(Practice ? 3 : 15);
 
         DateTimeOffset? next = null;
         if (!allowed)
@@ -219,9 +249,9 @@ public sealed class LockRules
             return new(false, $"You committed to {c.Profile} until {LocalText(c.UntilUtc)}. Unlock requests are possible after that.");
         if (state.PendingUnlock != null) return new(false, "An unlock request is already running.");
         var used = UnlockRequestsToday(state, now);
-        if (used >= cfg.Timings.MaxUnlockRequestsPerDay)
-            return new(false, $"Today's {cfg.Timings.MaxUnlockRequestsPerDay} unlock requests are used up (cancelled and expired ones count too). Tomorrow you have new ones.");
-        return new(true, $"{cfg.Timings.MaxUnlockRequestsPerDay - used} request(s) left today");
+        if (used >= T(cfg).MaxUnlockRequestsPerDay)
+            return new(false, $"Today's {T(cfg).MaxUnlockRequestsPerDay} unlock requests are used up (cancelled and expired ones count too). Tomorrow you have new ones.");
+        return new(true, $"{T(cfg).MaxUnlockRequestsPerDay - used} request(s) left today");
     }
 
     public UnlockRequest RequestUnlock(NetGuardConfig cfg, NetGuardState state, string target, string reason, DateTimeOffset now)
@@ -229,17 +259,17 @@ public sealed class LockRules
         var d = CanRequestUnlock(cfg, state, target, now);
         if (!d.Allowed) throw new InvalidOperationException(d.Reason);
         reason = (reason ?? "").Trim();
-        if (reason.Length < cfg.Timings.MinReasonLength)
-            throw new InvalidOperationException($"Please write a reason of at least {cfg.Timings.MinReasonLength} characters.");
+        if (reason.Length < T(cfg).MinReasonLength)
+            throw new InvalidOperationException($"Please write a reason of at least {T(cfg).MinReasonLength} characters.");
         var req = new UnlockRequest
         {
             FromProfile = state.ActiveProfile!,
             TargetProfile = cfg.FindProfile(target)!.Name,
             Reason = reason,
             RequestedUtc = now,
-            ReadyUtc = now.AddMinutes(cfg.Timings.CooldownMinutes),
-            ExpiresUtc = now.AddMinutes(cfg.Timings.CooldownMinutes + cfg.Timings.ConfirmWindowMinutes),
-            Passage = Passage.Generate(cfg.Timings.ConfirmPassageLength),
+            ReadyUtc = now.AddMinutes(T(cfg).CooldownMinutes),
+            ExpiresUtc = now.AddMinutes(T(cfg).CooldownMinutes + T(cfg).ConfirmWindowMinutes),
+            Passage = Passage.Generate(T(cfg).ConfirmPassageLength),
             Status = UnlockStatus.Pending,
         };
         state.UnlockRequests.Add(req);
@@ -273,8 +303,8 @@ public sealed class LockRules
     {
         var p = cfg.FindProfile(profile) ?? throw new InvalidOperationException($"There is no profile called '{profile}'.");
         if (p.Kind == ProfileKind.AllowAll) throw new InvalidOperationException("You can't commit to Maintenance.");
-        if (untilUtc < now.AddMinutes(5)) throw new InvalidOperationException("Please choose a time at least 5 minutes from now.");
-        if (untilUtc > now.AddDays(cfg.Timings.MaxCommitmentDays)) throw new InvalidOperationException($"At most {cfg.Timings.MaxCommitmentDays} days.");
+        if (untilUtc < now.AddMinutes(Practice ? 1 : 5)) throw new InvalidOperationException($"Please choose a time at least {(Practice ? 1 : 5)} minutes from now.");
+        if (untilUtc > now.AddDays(T(cfg).MaxCommitmentDays)) throw new InvalidOperationException($"At most {T(cfg).MaxCommitmentDays} days.");
 
         var cur = state.ActiveProfile == null ? null : cfg.FindProfile(state.ActiveProfile);
         if (cur != null && !ProfilePolicy.IsAtLeastAsStrict(p, cur))
@@ -305,7 +335,7 @@ public sealed class LockRules
             throw new InvalidOperationException(play.GraceActive || state.Graces.Any(g => g.Profile == p.Name && g.Date == DateKey(Local(now).Date))
                 ? "Today's extra minutes are already used."
                 : "Extra minutes are available during the last 15 minutes of play time.");
-        var until = play.EndsUtc!.Value.AddMinutes(cfg.Timings.GraceMinutes);
+        var until = play.EndsUtc!.Value.AddMinutes(T(cfg).GraceMinutes);
         state.Graces.Add(new GraceRecord { Profile = p.Name, Date = DateKey(Local(now).Date), UntilUtc = until });
         if (state.Graces.Count > 100) state.Graces.RemoveRange(0, state.Graces.Count - 100);
         return until;
@@ -334,7 +364,7 @@ public sealed class LockRules
         }
         var change = new PendingPlanChange
         {
-            Profile = p.Name, Plan = newPlan, RequestedUtc = now, EffectiveUtc = now.AddHours(cfg.Timings.PlanLoosenDelayHours),
+            Profile = p.Name, Plan = newPlan, RequestedUtc = now, EffectiveUtc = now + PlanDelay(cfg),
         };
         state.PendingPlanChanges.Add(change);
         return change;
@@ -351,7 +381,7 @@ public sealed class LockRules
         // play time used
         if (active?.Plan != null && elapsed > TimeSpan.Zero)
         {
-            var secs = (int)Math.Min(elapsed.TotalSeconds, 300);
+            var secs = (int)Math.Min(elapsed.TotalSeconds, 300) * Speed;
             if (!state.PlayUsage.TryGetValue(active.Name, out var days)) state.PlayUsage[active.Name] = days = new();
             var key = DateKey(Local(now).Date);
             days[key] = (days.TryGetValue(key, out var s) ? s : 0) + secs;
@@ -431,7 +461,7 @@ public sealed class LockRules
             if (viaUnlock)
             {
                 state.MaintenanceReturnTo = from;
-                state.MaintenanceUntilUtc = now.AddMinutes(cfg.Timings.MaintenanceMaxMinutes);
+                state.MaintenanceUntilUtc = now.AddMinutes(T(cfg).MaintenanceMaxMinutes);
             }
         }
         else

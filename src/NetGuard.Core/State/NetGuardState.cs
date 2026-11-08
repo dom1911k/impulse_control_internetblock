@@ -17,6 +17,15 @@ public sealed class AppliedRule
     public string Action { get; set; } = "";
 }
 
+/// <summary>Practice mode: short timings for a limited time; afterwards everything it produced is undone.</summary>
+public sealed class PracticeSession
+{
+    public DateTimeOffset StartedUtc { get; set; }
+    public DateTimeOffset EndsUtc { get; set; }
+    /// <summary>JSON of the time-based state before practice started (restored at the end).</summary>
+    public string Snapshot { get; set; } = "";
+}
+
 public enum UnlockStatus { Pending, Confirmed, Expired, Cancelled }
 
 public sealed class UnlockRequest
@@ -102,6 +111,8 @@ public sealed class NetGuardState
     public List<PendingPlanChange> PendingPlanChanges { get; set; } = new();
     /// <summary>NetGuard's own clock (ignores jumps of the Windows clock), saved across restarts.</summary>
     public DateTimeOffset? TrustedNowUtc { get; set; }
+
+    public PracticeSession? Practice { get; set; }
 
     public UnlockRequest? PendingUnlock => UnlockRequests.LastOrDefault(r => r.Status == UnlockStatus.Pending);
 

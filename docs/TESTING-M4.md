@@ -17,9 +17,49 @@ What's new:
 - **Clock protection.** Changing the Windows clock doesn't speed anything up; it's logged.
 
 Update first: **Tools → Check for updates → Install update**, then reopen NetGuard.
-The full test takes a while because of the real waiting times. Spread it over an evening.
+
+## Quick test with practice mode (≈ 25 minutes)
+
+Practice mode makes everything short for 30 minutes: unlock wait **1 min**, confirm window
+**3 min** with a short passage, Maintenance **2 min**, extra minutes **1 min**, play time counts
+**10× faster**, looser plan changes wait **2 min**. It only starts with normal internet. Afterwards
+normal internet comes back by itself and **nothing counts**: play time, unlock requests,
+commitments and waiting plan changes from practice are undone.
+
+Start with **normal internet** (banner "Normal internet").
+
+1. **Play plan.** Play time tab → WoW → tick *has a play plan*. For **today** add a window from now
+   (rounded down to the half hour) until about 2 hours from now. Per day **30 min**. Game: only
+   World of Warcraft. Fallback: Offline. **Save** → ✅ "applied right away" (no lock active).
+2. **Start practice.** Setup → **Start practice (30 min)**. ✅ A yellow stripe "PRACTICE MODE until …".
+3. **Play.** Profiles → **Switch to WoW**. ✅ Banner "Play time left" counts down from about **3:00**
+   (30 minutes at 10× speed). ✅ At under 3 minutes the **Extra minutes** button appears: take it.
+   ✅ When time is up: automatic switch to **Offline**, WoW card "Today's play time is used up".
+4. **Commitment.** **Commit…** → Offline, set a time ~5 minutes ahead → ✅ Maintenance card says
+   "You committed to Offline until …". Try an earlier time → ❌ "never shortened". Wait for it to end.
+5. **Unlock.** Maintenance card → **Request unlock…** → reason → ✅ amber panel "waiting 0:59".
+   After a minute: ✅ tray balloon, the passage appears. Try **pasting** → nothing. Type it →
+   **Confirm unlock** → ✅ Maintenance. Chrome works, **WoW doesn't** (outside play time), Steam
+   doesn't. ✅ After 2 minutes back to Offline by itself.
+6. **Limit.** Request another unlock and cancel it, then try a third → ❌ "Today's 2 unlock requests
+   are used up".
+7. **Looser plan change during a lock.** Play time → WoW → per day **1 h** → Save → ✅ "takes effect
+   in 72 hours" (2 minutes in practice) with a *Cancel* button. Let it apply ✅.
+8. **End.** Setup → **End practice now** (or wait). ✅ Stripe gone, normal internet, WoW card shows
+   today's play time as before practice, History shows *Practice mode ended*.
+
+Optional clock test (outside practice, during a commitment): Settings → Time & language → Date &
+time → turn off *Set time automatically* → set the time 3 hours later. ✅ The commitment is still
+active, History shows *Clock change ignored*. Turn automatic time back on.
+
+Report back: ✅/❌ per step, screenshots of the unlock panel (waiting and confirm), the Play time tab
+and History. Anything confusing, too harsh or too lax?
 
 ---
+
+## The real thing (optional, takes an evening)
+
+The same steps without practice mode, with real waiting times:
 
 ## 1. A play plan (≈ 5 min to set up)
 
@@ -72,7 +112,3 @@ one is refused: "Today's 2 unlock requests are used up".
 While a profile is active (e.g. Offline): **Play time** → WoW → per day **1 h** → Save. ✅ "takes effect in 72 hours", an amber box shows the
 waiting change with **Cancel the waiting change**. Cancel it ✅.
 
-## 6. Report back
-
-✅/❌ per step, screenshots of the Profiles tab during the unlock wait and during the confirm
-step, the Play time tab, and the History tab. Anything confusing, too harsh or too lax?

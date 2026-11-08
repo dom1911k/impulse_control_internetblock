@@ -281,3 +281,31 @@ public class M4Tests
         Assert.Equal(1440, PlayWindow.ParseTime("24:00"));
     }
 }
+
+public class PracticeTests
+{
+    private static readonly LockRules Rules = new(TimeZoneInfo.Utc) { Practice = true };
+    private static DateTimeOffset At(int h, int m = 0, int s = 0) => new(2026, 11, 9, h, m, s, TimeSpan.Zero);
+
+    [Fact]
+    public void Practice_makes_everything_short()
+    {
+        var cfg = DefaultConfig.Create(new DetectedPaths());
+        cfg.FindProfile("WoW")!.Plan = new PlayPlan
+        {
+            GamePrograms = { "World of Warcraft" }, DailyLimitMinutes = 30,
+            Windows = { new PlayWindow { Day = DayOfWeek.Monday, Start = "00:00", End = "24:00" } },
+        };
+        var st = new NetGuardState { ActiveProfile = "Offline" };
+        var req = Rules.RequestUnlock(cfg, st, "Maintenance", "Practising the unlock process now", At(10));
+        Assert.Equal(At(10, 1), req.ReadyUtc);
+        Assert.Equal(At(10, 4), req.ExpiresUtc);
+        Assert.InRange(req.Passage.Length, 60, 80);
+
+        st.ActiveProfile = "WoW";
+        Assert.Equal(At(12, 3), Rules.GetPlayStatus(cfg, st, cfg.FindProfile("WoW")!, At(12)).EndsUtc); // 30 min at 10× = 3 min
+        Rules.Tick(cfg, st, At(12, 1), TimeSpan.FromMinutes(1));
+        Assert.Equal(10, Rules.GetPlayStatus(cfg, st, cfg.FindProfile("WoW")!, At(12, 1)).UsedTodayMinutes);
+        Assert.NotNull(Rules.Commit(cfg, new NetGuardState { ActiveProfile = "WoW" }, "Offline", At(12, 2, 30), At(12, 1)));
+    }
+}

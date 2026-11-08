@@ -57,7 +57,12 @@ public sealed class Guard
         };
         _lastTick = _clock.Now;
         // Games outside their play time are blocked in every profile.
-        _engine.ExtraBlocked = cfg => _rules.BlockedGamePrograms(cfg, _engine.LoadState(), _clock.Now);
+        _engine.ExtraBlocked = cfg =>
+        {
+            var st = _engine.LoadState();
+            SyncPractice(st);
+            return _rules.BlockedGamePrograms(cfg, st, _clock.Now);
+        };
     }
 
     public Engine Engine => _engine;
@@ -78,7 +83,10 @@ public sealed class Guard
             var untilDeadline = tm.DeadlineUtc - DateTimeOffset.UtcNow;
             if (untilDeadline < interval) return untilDeadline < TimeSpan.FromSeconds(1) ? TimeSpan.FromSeconds(1) : untilDeadline;
         }
-        // Wake up exactly when play time ends, a cooldown is over, a commitment ends…
+        // Wake up exactly when play time ends, a cooldown is over, a commitment ends, practice ends…
+        SyncPractice(state);
+        if (state.Practice is { } pr && pr.EndsUtc - Now < interval)
+            return pr.EndsUtc - Now < TimeSpan.FromSeconds(1) ? TimeSpan.FromSeconds(1) : pr.EndsUtc - Now + TimeSpan.FromSeconds(1);
         if (TryLoadConfig() is { } cfg && _rules.NextEvent(cfg, state, Now) is { } next)
         {
             var until = next - Now + TimeSpan.FromSeconds(1);
@@ -88,10 +96,24 @@ public sealed class Guard
     }
 
     /// <summary>One self-healing pass.</summary>
+    /// <summary>Short timings while practice mode runs.</summary>
+    private void SyncPractice(NetGuardState? state = null)
+    {
+        state ??= _engine.LoadState();
+        _rules.Practice = state.Practice is { } p && p.EndsUtc > Now;
+    }
+
     /// <summary>Time-based rules: count play time, expire unlocks, apply due plan changes, switch when time is up.</summary>
     private void RunRules(NetGuardConfig cfg)
     {
         var now = Now;
+        var pre = _engine.LoadState();
+        if (pre.Practice is { } practice && practice.EndsUtc <= now)
+        {
+            EndPractice("practice time is over", ServiceActor);
+            return;
+        }
+        SyncPractice(pre);
         var elapsed = now - _lastTick;
         _lastTick = now;
         if (elapsed > TimeSpan.FromMinutes(5) || elapsed < TimeSpan.Zero) elapsed = TimeSpan.Zero; // after sleep/hibernate: don't count it
@@ -107,8 +129,11 @@ public sealed class Guard
 
     private void SwitchInternal(NetGuardConfig cfg, string target, string actor, bool viaUnlock, string? autoReason = null)
     {
-        var from = _engine.LoadState().ActiveProfile;
-        DeadManSwitch.Disarm(); // a permanent lock must not be undone by a leftover test-mode safety task
+        var before = _engine.LoadState();
+        var from = before.ActiveProfile;
+        // A permanent lock must not be undone by a leftover test-mode safety task – but in practice mode that
+        // task is exactly what guarantees normal internet comes back, so it stays.
+        if (before.Practice == null) DeadManSwitch.Disarm();
         _engine.ApplyProfile(cfg, target, actor, null);
         var state = _engine.LoadState();
         _rules.OnSwitched(cfg, state, from, cfg.FindProfile(target)?.Name ?? target, Now, viaUnlock);
@@ -228,6 +253,7 @@ public sealed class Guard
         {
             try
             {
+                SyncPractice();
                 return req.Command switch
                 {
                     IpcCommands.Status => new IpcResponse { Ok = true, Status = BuildStatus(caller) },
@@ -262,6 +288,8 @@ public sealed class Guard
                     IpcCommands.PlanSet => PlanSet(req, caller),
                     IpcCommands.PlanCancel => PlanCancel(req, caller),
                     IpcCommands.ProgramReapprove => Reapprove(req, caller),
+                    IpcCommands.PracticeStart => PracticeStart(req, caller),
+                    IpcCommands.PracticeEnd => EndPractice("ended by you", caller.Name),
                     _ => IpcResponse.Fail($"Unknown request '{req.Command}'."),
                 };
             }
@@ -324,6 +352,7 @@ public sealed class Guard
             CommitmentProfile = state.Commitment is { } c && c.UntilUtc > Now ? c.Profile : null,
             CommitmentUntilUtc = state.Commitment is { } c2 && c2.UntilUtc > Now ? c2.UntilUtc : null,
             MaintenanceUntilUtc = state.MaintenanceUntilUtc,
+            PracticeUntilUtc = state.Practice?.EndsUtc,
         };
         if (cfg == null) return dto;
 
@@ -798,5 +827,79 @@ public sealed class Guard
         _engine.Log.Append(LogTypes.ConfigChanged, new { change = $"re-approved the new version of {e.Name}", path = file }, caller.Name);
         if (state.ActiveProfile != null) _engine.Heal(cfg, caller.Name);
         return IpcResponse.Success($"The current version of {e.Name} is approved.");
+    }
+
+    // ================================================================ practice mode
+
+    private sealed class PracticeSnapshot
+    {
+        public List<UnlockRequest> UnlockRequests { get; set; } = new();
+        public Commitment? Commitment { get; set; }
+        public Dictionary<string, Dictionary<string, int>> PlayUsage { get; set; } = new();
+        public List<GraceRecord> Graces { get; set; } = new();
+        public List<PendingPlanChange> PendingPlanChanges { get; set; } = new();
+        public DateTimeOffset? LastMaintenanceUtc { get; set; }
+    }
+
+    /// <summary>
+    /// Practice mode: only from normal internet (so it can't shorten a real lock), at most 60 minutes.
+    /// The same SYSTEM safety task as test locks makes sure normal internet comes back.
+    /// </summary>
+    private IpcResponse PracticeStart(IpcRequest req, CallerInfo caller)
+    {
+        var cfg = RequireConfig();
+        var state = _engine.LoadState();
+        if (state.ActiveProfile != null) return Refuse(caller, req, "Practice mode can only be started with normal internet (no profile active).");
+        if (state.Practice != null) return IpcResponse.Fail("Practice mode is already running.");
+        if (!RecoveryCode.Exists(state)) return Refuse(caller, req, "Create your recovery code first (Setup).");
+        var minutes = Math.Clamp(req.Minutes ?? 30, 5, 60);
+        var now = Now;
+        var snap = new PracticeSnapshot
+        {
+            UnlockRequests = state.UnlockRequests, Commitment = state.Commitment, PlayUsage = state.PlayUsage,
+            Graces = state.Graces, PendingPlanChanges = state.PendingPlanChanges, LastMaintenanceUtc = state.LastMaintenanceUtc,
+        };
+        state.Practice = new PracticeSession
+        {
+            StartedUtc = now,
+            EndsUtc = now.AddMinutes(minutes),
+            Snapshot = System.Text.Json.JsonSerializer.Serialize(snap, NetGuardConfig.JsonOptions),
+        };
+        _engine.SaveState(state);
+        if (File.Exists(TestMode.NgctlPath))
+            DeadManSwitch.Arm(DateTime.Now.AddMinutes(minutes).AddSeconds(45), TestMode.NgctlPath, ProgramDir);
+        _engine.Log.Append(LogTypes.PracticeStarted, new { minutes }, caller.Name);
+        _ = cfg;
+        return IpcResponse.Success($"Practice mode for {minutes} minutes: unlock wait 1 min, confirm window 3 min, short passage, Maintenance 2 min, " +
+                                   "grace 1 min, play time counts 10× faster, looser plan changes after 2 min. " +
+                                   "Afterwards normal internet comes back and nothing you did counts.");
+    }
+
+    private IpcResponse EndPractice(string reason, string actor)
+    {
+        var state = _engine.LoadState();
+        if (state.Practice == null) return IpcResponse.Fail("Practice mode isn't running.");
+        if (state.ActiveProfile != null) _engine.Recover("practice mode ended", actor);
+        state = _engine.LoadState();
+        try
+        {
+            var snap = System.Text.Json.JsonSerializer.Deserialize<PracticeSnapshot>(state.Practice!.Snapshot, NetGuardConfig.JsonOptions) ?? new PracticeSnapshot();
+            state.UnlockRequests = snap.UnlockRequests;
+            state.Commitment = snap.Commitment;
+            state.PlayUsage = new Dictionary<string, Dictionary<string, int>>(snap.PlayUsage, StringComparer.OrdinalIgnoreCase);
+            state.Graces = snap.Graces;
+            state.PendingPlanChanges = snap.PendingPlanChanges;
+            state.LastMaintenanceUtc = snap.LastMaintenanceUtc;
+        }
+        catch (Exception e) { _logger.LogWarning(e, "Practice snapshot could not be restored"); }
+        state.Practice = null;
+        state.MaintenanceReturnTo = null;
+        state.MaintenanceUntilUtc = null;
+        _engine.SaveState(state);
+        try { DeadManSwitch.Disarm(); } catch { }
+        _rules.Practice = false;
+        _engine.Log.Append(LogTypes.PracticeEnded, new { reason }, actor);
+        Protect();
+        return IpcResponse.Success("Practice mode ended. Normal internet is back, and nothing from practice counts.");
     }
 }

@@ -91,6 +91,8 @@ public static class Report
         LogTypes.PlanChanged => "Play plan changed",
         LogTypes.PlanChangePending => "Play plan change waiting",
         LogTypes.ClockJump => "Clock change ignored",
+        LogTypes.PracticeStarted => "Practice mode started",
+        LogTypes.PracticeEnded => "Practice mode ended",
         LogTypes.ProfileApplied => "Profile applied",
         LogTypes.ApplyError => "Problem while applying",
         LogTypes.Recovery => "Normal internet restored",

@@ -203,9 +203,18 @@ public partial class MainWindow : Window
         await RunAsync("Cancel unlock", new IpcRequest { Command = IpcCommands.UnlockCancel });
     }
 
+    private async void OnPracticeStart(object sender, RoutedEventArgs e)
+    {
+        if (await RunAsync("Practice mode", new IpcRequest { Command = IpcCommands.PracticeStart, Minutes = 30 }) is { Ok: true })
+            Tabs.SelectedIndex = 0; // back to Profiles to try things out
+    }
+
+    private async void OnPracticeEnd(object sender, RoutedEventArgs e) =>
+        await RunAsync("End practice mode", new IpcRequest { Command = IpcCommands.PracticeEnd });
+
     private async void OnGrace(object sender, RoutedEventArgs e)
     {
-        if (MessageBox.Show(this, "Take 10 more minutes? This is possible once a day, and tomorrow's play time is 10 minutes shorter.",
+        if (MessageBox.Show(this, "Take the extra minutes? This is possible once a day, and they come off tomorrow's play time.",
                 "Extra minutes", MessageBoxButton.OKCancel, MessageBoxImage.Question) != MessageBoxResult.OK) return;
         await RunAsync("Extra minutes", new IpcRequest { Command = IpcCommands.Grace });
     }
@@ -295,6 +304,14 @@ public partial class MainWindow : Window
             notices.Add($"🛠 No Maintenance for a while – Windows and Defender haven't been able to update. Consider a Maintenance unlock soon.");
         NoticeText.Text = string.Join("\n", notices);
         NoticeText.Visibility = notices.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
+
+        PracticeStripe.Visibility = _status.PracticeUntilUtc != null ? Visibility.Visible : Visibility.Collapsed;
+        PracticeStripeText.Text = _status.PracticeUntilUtc is { } pu
+            ? $"🧪 PRACTICE MODE until {Fmt(pu)} – all waiting times are short and nothing counts. Afterwards normal internet comes back by itself."
+            : "";
+        PracticeStartButton.IsEnabled = _status.PracticeUntilUtc == null && _status.ActiveProfile == null && _status.RecoveryCodeExists;
+        PracticeStartButton.ToolTip = PracticeStartButton.IsEnabled ? null : "Only with normal internet, and with a recovery code.";
+        PracticeEndButton.IsEnabled = _status.PracticeUntilUtc != null;
 
         UpdateUnlockPanel();
         BuildProfileCards(_status);

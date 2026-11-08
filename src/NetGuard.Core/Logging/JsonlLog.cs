@@ -34,6 +34,8 @@ public static class LogTypes
     public const string PlanChanged = "plan-changed";
     public const string PlanChangePending = "plan-change-pending";
     public const string ClockJump = "clock-changed";
+    public const string PracticeStarted = "practice-started";
+    public const string PracticeEnded = "practice-ended";
 }
 
 /// <summary>Append-only JSON-lines log (one JSON object per line).</summary>

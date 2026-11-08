@@ -5,6 +5,11 @@
         WindowStartupLocation="CenterScreen" Background="#F4F6F8"
         FontFamily="Segoe UI" FontSize="14" Icon="Assets/netguard.ico">
     <DockPanel>
+        <!-- ===== Practice mode stripe ===== -->
+        <Border x:Name="PracticeStripe" DockPanel.Dock="Top" Background="#F2C230" Padding="28,6" Visibility="Collapsed">
+            <TextBlock x:Name="PracticeStripeText" FontWeight="SemiBold" Foreground="#3A2E00" TextWrapping="Wrap"/>
+        </Border>
+
         <!-- ===== Status banner ===== -->
         <Border x:Name="Banner" DockPanel.Dock="Top" Background="#2E3A46" Padding="28,20">
             <Grid>
@@ -21,7 +26,7 @@
                 <StackPanel x:Name="PlayPanel" Visibility="Collapsed" HorizontalAlignment="Right">
                     <TextBlock x:Name="PlayLabel" Text="Play time left" Foreground="#DCE4EC" HorizontalAlignment="Right"/>
                     <TextBlock x:Name="PlayLeftText" Text="0:00" FontSize="40" FontWeight="Light" Foreground="White" HorizontalAlignment="Right"/>
-                    <Button x:Name="GraceButton" Content="10 more minutes (once today)" Style="{StaticResource Secondary}" Margin="0,4,0,0" Visibility="Collapsed" Click="OnGrace"/>
+                    <Button x:Name="GraceButton" Content="Extra minutes (once today)" Style="{StaticResource Secondary}" Margin="0,4,0,0" Visibility="Collapsed" Click="OnGrace"/>
                 </StackPanel>
                 <StackPanel x:Name="CountdownPanel" Visibility="Collapsed">
                     <TextBlock Text="Internet comes back in" Foreground="#DCE4EC" HorizontalAlignment="Right"/>
@@ -117,6 +122,16 @@
                                 <TextBlock Style="{StaticResource H2}" Text="Setup wizard"/>
                                 <TextBlock Style="{StaticResource Body}" Text="Finds your apps, checks which programs each profile allows, creates your recovery code, and runs a one-minute recovery test."/>
                                 <Button Content="Run setup wizard" Style="{StaticResource Primary}" HorizontalAlignment="Left" Click="OnRunWizard"/>
+                            </StackPanel>
+                        </Border>
+                        <Border Style="{StaticResource Card}">
+                            <StackPanel>
+                                <TextBlock Style="{StaticResource H2}" Text="Practice mode"/>
+                                <TextBlock Style="{StaticResource Body}" Text="Try unlocks, commitments and play time without waiting: for 30 minutes the unlock wait is 1 minute, the confirm window 3 minutes with a short passage, Maintenance lasts 2 minutes, play time counts 10× faster and looser plan changes wait 2 minutes. Only possible with normal internet. Afterwards normal internet comes back by itself and nothing you did counts."/>
+                                <WrapPanel>
+                                    <Button x:Name="PracticeStartButton" Content="Start practice (30 min)" Style="{StaticResource Primary}" Click="OnPracticeStart"/>
+                                    <Button x:Name="PracticeEndButton" Content="End practice now" Style="{StaticResource Secondary}" Click="OnPracticeEnd"/>
+                                </WrapPanel>
                             </StackPanel>
                         </Border>
                         <Border Style="{StaticResource Card}">

@@ -41,6 +41,8 @@ public static class IpcCommands
     public const string PlanSet = "plan-set";
     public const string PlanCancel = "plan-cancel";
     public const string ProgramReapprove = "program-reapprove";
+    public const string PracticeStart = "practice-start";
+    public const string PracticeEnd = "practice-end";
 }
 
 public sealed class IpcRequest
@@ -98,6 +100,8 @@ public sealed class StatusDto
     public DateTimeOffset? MaintenanceUntilUtc { get; set; }
     public bool MaintenanceReminder { get; set; }
     public List<string> RejectedFiles { get; set; } = new();
+    /// <summary>Practice mode is running until then (short waiting times; normal internet afterwards).</summary>
+    public DateTimeOffset? PracticeUntilUtc { get; set; }
     public List<ProfileDto> Profiles { get; set; } = new();
 }
 
