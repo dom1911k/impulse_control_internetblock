@@ -61,6 +61,7 @@ public sealed class Engine
     public (DesiredState desired, Plan plan, ExecutionResult result) ApplyProfile(
         NetGuardConfig cfg, string profile, string actor, TestModeInfo? testMode)
     {
+        using var _ = EngineLock.Acquire(_paths);
         var desired = BuildDesired(cfg, profile);
         var plan = PlanApply(cfg, desired);
         var state = LoadState();
@@ -91,6 +92,8 @@ public sealed class Engine
     /// <summary>Normal internet again: undo everything NetGuard did.</summary>
     public (Plan plan, ExecutionResult result) Recover(string reason, string actor)
     {
+        // If another process is restoring right now, we wait and then find little or nothing left to do.
+        using var _ = EngineLock.Acquire(_paths);
         var state = LoadState();
         var plan = PlanRecovery(state);
         var result = Execute(plan, state);

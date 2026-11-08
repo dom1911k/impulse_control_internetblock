@@ -279,3 +279,44 @@ public class PlanOrderTests
         Assert.Equal(0, First<SetDefaultOutboundAction>(recovery));
     }
 }
+
+public class EngineLockTests
+{
+    [Fact]
+    public void Second_process_waits_for_the_first()
+    {
+        using var env = new TestEnv();
+        var held = EngineLock.Acquire(env.Paths);
+        var acquiredAt = DateTime.MinValue;
+        var t = Task.Run(() => { using var l = EngineLock.Acquire(env.Paths); acquiredAt = DateTime.UtcNow; });
+        Thread.Sleep(300);
+        Assert.False(t.IsCompleted);
+        var releasedAt = DateTime.UtcNow;
+        held.Dispose();
+        Assert.True(t.Wait(5000));
+        Assert.True(acquiredAt >= releasedAt);
+    }
+
+    [Fact]
+    public void Times_out_with_a_friendly_message()
+    {
+        using var env = new TestEnv();
+        using var held = EngineLock.Acquire(env.Paths);
+        Assert.Throws<TimeoutException>(() => EngineLock.Acquire(env.Paths, TimeSpan.FromMilliseconds(200)));
+    }
+
+    [Fact]
+    public void Concurrent_recoveries_do_not_collide()
+    {
+        using var env = new TestEnv();
+        var cfg = env.CreateStandardPc();
+        env.CreateEngine().ApplyProfile(cfg, "WoW", "test", null);
+
+        var results = Enumerable.Range(0, 2)
+            .Select(_ => Task.Run(() => env.CreateEngine().Recover("race", "test").result))
+            .Select(t => t.Result).ToList();
+
+        Assert.All(results, r => Assert.True(r.Success));
+        Assert.Contains(results, r => r.Done.Count == 0); // the second one found nothing left to do
+    }
+}

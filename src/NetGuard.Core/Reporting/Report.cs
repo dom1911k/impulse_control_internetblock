@@ -81,7 +81,11 @@ public static class Report
         foreach (var key in new[] { "profile", "reason", "minutes", "path", "from", "to", "endedEarly" })
             if (d[key] is { } v) parts.Add($"{key}: {v.ToJsonString().Trim('"')}");
         if (d["changes"] is JsonArray c) parts.Add($"{c.Count} change(s)");
-        if (d["errors"] is JsonArray er && er.Count > 0) parts.Add($"{er.Count} ERROR(S)");
+        if (d["errors"] is JsonArray er && er.Count > 0)
+        {
+            var first = er[0] is JsonObject fe ? $"{(string?)fe["action"]}: {(string?)fe["error"]}" : er[0]?.ToJsonString();
+            parts.Add($"{er.Count} ERROR(S) – {first}");
+        }
         return string.Join(" · ", parts);
     }
 }
