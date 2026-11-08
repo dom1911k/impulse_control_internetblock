@@ -1,0 +1,50 @@
+﻿
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio Version 17
+VisualStudioVersion = 17.0.31903.59
+MinimumVisualStudioVersion = 10.0.40219.1
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "src", "src", "{5E93BD6E-FECB-44E0-BE38-31FFBAC68828}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "NetGuard.Cli", "src\NetGuard.Cli\NetGuard.Cli.csproj", "{526EB09C-8B99-4CFC-A9C8-00BA8B0E3D58}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "NetGuard.Core", "src\NetGuard.Core\NetGuard.Core.csproj", "{8479150D-DAF4-4DBC-A845-182602B54742}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "NetGuard.Windows", "src\NetGuard.Windows\NetGuard.Windows.csproj", "{BD565C99-5C67-473B-9577-4C4575986E80}"
+EndProject
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "tests", "tests", "{8D875FBA-D045-41AD-AAA6-83DD8D969484}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "NetGuard.Core.Tests", "tests\NetGuard.Core.Tests\NetGuard.Core.Tests.csproj", "{2EDCD1E0-85A2-4E59-99F7-A679E59C8D8B}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|Any CPU = Debug|Any CPU
+		Release|Any CPU = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(SolutionProperties) = preSolution
+		HideSolutionNode = FALSE
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{526EB09C-8B99-4CFC-A9C8-00BA8B0E3D58}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{526EB09C-8B99-4CFC-A9C8-00BA8B0E3D58}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{526EB09C-8B99-4CFC-A9C8-00BA8B0E3D58}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{526EB09C-8B99-4CFC-A9C8-00BA8B0E3D58}.Release|Any CPU.Build.0 = Release|Any CPU
+		{8479150D-DAF4-4DBC-A845-182602B54742}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{8479150D-DAF4-4DBC-A845-182602B54742}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{8479150D-DAF4-4DBC-A845-182602B54742}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{8479150D-DAF4-4DBC-A845-182602B54742}.Release|Any CPU.Build.0 = Release|Any CPU
+		{BD565C99-5C67-473B-9577-4C4575986E80}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{BD565C99-5C67-473B-9577-4C4575986E80}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{BD565C99-5C67-473B-9577-4C4575986E80}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{BD565C99-5C67-473B-9577-4C4575986E80}.Release|Any CPU.Build.0 = Release|Any CPU
+		{2EDCD1E0-85A2-4E59-99F7-A679E59C8D8B}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{2EDCD1E0-85A2-4E59-99F7-A679E59C8D8B}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{2EDCD1E0-85A2-4E59-99F7-A679E59C8D8B}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{2EDCD1E0-85A2-4E59-99F7-A679E59C8D8B}.Release|Any CPU.Build.0 = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(NestedProjects) = preSolution
+		{526EB09C-8B99-4CFC-A9C8-00BA8B0E3D58} = {5E93BD6E-FECB-44E0-BE38-31FFBAC68828}
+		{8479150D-DAF4-4DBC-A845-182602B54742} = {5E93BD6E-FECB-44E0-BE38-31FFBAC68828}
+		{BD565C99-5C67-473B-9577-4C4575986E80} = {5E93BD6E-FECB-44E0-BE38-31FFBAC68828}
+		{2EDCD1E0-85A2-4E59-99F7-A679E59C8D8B} = {8D875FBA-D045-41AD-AAA6-83DD8D969484}
+	EndGlobalSection
+EndGlobal

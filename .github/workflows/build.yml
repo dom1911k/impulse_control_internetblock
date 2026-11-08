@@ -1,0 +1,34 @@
+name: build
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+
+      - name: Unit tests
+        run: dotnet test tests/NetGuard.Core.Tests -c Release
+
+      - name: Publish ngctl.exe (self-contained, single file)
+        run: dotnet publish src/NetGuard.Cli -c Release -o publish/ngctl
+
+      - name: Add docs
+        shell: pwsh
+        run: |
+          Copy-Item docs/TESTING-M1.md publish/ngctl/
+          Copy-Item docs/RECOVERY.md publish/ngctl/
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: NetGuard-ngctl-win-x64
+          path: publish/ngctl/
+          retention-days: 30

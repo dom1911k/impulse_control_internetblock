@@ -1,0 +1,13 @@
+<Project>
+  <PropertyGroup>
+    <LangVersion>latest</LangVersion>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <TreatWarningsAsErrors>false</TreatWarningsAsErrors>
+    <!-- lets the Windows projects compile on Linux/macOS too (CI and development) -->
+    <EnableWindowsTargeting>true</EnableWindowsTargeting>
+    <Version>0.1.0</Version>
+    <Company>NetGuard</Company>
+    <Product>NetGuard</Product>
+  </PropertyGroup>
+</Project>

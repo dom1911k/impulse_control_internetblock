@@ -1,0 +1,11 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- Platform-independent logic: config, planning, state machines, logging.
+       No Windows APIs here so it can be unit-tested anywhere. -->
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <RootNamespace>NetGuard.Core</RootNamespace>
+  </PropertyGroup>
+  <ItemGroup>
+    <InternalsVisibleTo Include="NetGuard.Core.Tests" />
+  </ItemGroup>
+</Project>

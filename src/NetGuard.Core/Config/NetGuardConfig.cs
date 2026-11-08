@@ -1,0 +1,153 @@
+using System.Text.Json;
+using System.Text.Json.Serialization;
+
+namespace NetGuard.Core.Config;
+
+public enum ProfileKind
+{
+    /// <summary>Default outbound = Block; only listed programs (plus base service rules) may connect.</summary>
+    Allowlist,
+    /// <summary>Default outbound = Allow (Maintenance). Always-blocked programs stay blocked.</summary>
+    AllowAll,
+}
+
+public enum PinMode
+{
+    /// <summary>Any file at the path is allowed. Only sensible for admin-only folders.</summary>
+    None,
+    /// <summary>File must carry a valid Authenticode signature whose subject contains <see cref="ProgramEntry.Signer"/>.</summary>
+    Signature,
+    /// <summary>File's SHA-256 must equal <see cref="ProgramEntry.Sha256"/> (breaks on every update).</summary>
+    Sha256,
+}
+
+public sealed class ProgramEntry
+{
+    /// <summary>Friendly name, e.g. "Spotify".</summary>
+    public string Name { get; set; } = "";
+
+    /// <summary>
+    /// Path patterns. Environment variables (%ProgramData%) are expanded.
+    /// '*' and '?' work inside a path segment; a segment of '**' matches any number of folders.
+    /// </summary>
+    public List<string> Paths { get; set; } = new();
+
+    public PinMode Pin { get; set; } = PinMode.None;
+
+    /// <summary>Text the certificate subject must contain, e.g. "Spotify AB".</summary>
+    public string? Signer { get; set; }
+
+    public string? Sha256 { get; set; }
+}
+
+/// <summary>A rule for a Windows service hosted in svchost (DNS, time sync…). Present in every profile.</summary>
+public sealed class ServiceRuleEntry
+{
+    public string Id { get; set; } = "";          // short id used in the rule name, e.g. "dns-udp"
+    public string Program { get; set; } = @"%SystemRoot%\System32\svchost.exe";
+    public string Service { get; set; } = "";
+    public string Protocol { get; set; } = "UDP"; // TCP | UDP | Any
+    public string? RemotePorts { get; set; }
+}
+
+public sealed class ProfileDefinition
+{
+    public string Name { get; set; } = "";
+    public ProfileKind Kind { get; set; } = ProfileKind.Allowlist;
+    public List<ProgramEntry> Programs { get; set; } = new();
+}
+
+public sealed class TimingSettings
+{
+    public int TestModeMinutes { get; set; } = 3;
+    public int HealIntervalSeconds { get; set; } = 30;
+    public int CooldownMinutes { get; set; } = 45;
+    public int ConfirmWindowMinutes { get; set; } = 10;
+    public int MaxUnlockRequestsPerDay { get; set; } = 2;
+    public int MinReasonLength { get; set; } = 20;
+    public int ConfirmPassageLength { get; set; } = 400;
+    public int MaintenanceMaxMinutes { get; set; } = 45;
+    public int MaintenanceReminderDays { get; set; } = 14;
+}
+
+public sealed class NetGuardConfig
+{
+    public int SchemaVersion { get; set; } = 1;
+
+    public List<ProfileDefinition> Profiles { get; set; } = new();
+
+    /// <summary>Allow rules for system services, added to every profile (DNS, NTP, connectivity check).</summary>
+    public List<ServiceRuleEntry> BaseServiceRules { get; set; } = new();
+
+    /// <summary>Programs blocked in every profile, even Maintenance (Steam).</summary>
+    public List<ProgramEntry> AlwaysBlocked { get; set; } = new();
+
+    /// <summary>Host names sent to 0.0.0.0 via the hosts file in every profile.</summary>
+    public List<string> AlwaysBlockedHosts { get; set; } = new();
+
+    /// <summary>
+    /// Firewall rule groups NetGuard never disables (Core Networking: DHCP, IPv6 neighbour discovery…).
+    /// Matched against the rule's Grouping (resource string or display name).
+    /// </summary>
+    public List<string> ProtectedRuleGroups { get; set; } = new();
+
+    public TimingSettings Timings { get; set; } = new();
+
+    public ProfileDefinition? FindProfile(string name) =>
+        Profiles.FirstOrDefault(p => string.Equals(p.Name, name, StringComparison.OrdinalIgnoreCase));
+
+    public static readonly JsonSerializerOptions JsonOptions = new()
+    {
+        WriteIndented = true,
+        PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
+        Converters = { new JsonStringEnumConverter() },
+        ReadCommentHandling = JsonCommentHandling.Skip,
+        AllowTrailingCommas = true,
+    };
+
+    public static NetGuardConfig Load(string path)
+    {
+        var json = File.ReadAllText(path);
+        var cfg = JsonSerializer.Deserialize<NetGuardConfig>(json, JsonOptions)
+                  ?? throw new InvalidDataException("Config file is empty.");
+        cfg.Validate();
+        return cfg;
+    }
+
+    public void Save(string path) => AtomicFile.WriteAllText(path, JsonSerializer.Serialize(this, JsonOptions));
+
+    public void Validate()
+    {
+        if (Profiles.Count == 0) throw new InvalidDataException("Config has no profiles.");
+        var dup = Profiles.GroupBy(p => p.Name, StringComparer.OrdinalIgnoreCase).FirstOrDefault(g => g.Count() > 1);
+        if (dup != null) throw new InvalidDataException($"Profile '{dup.Key}' is defined twice.");
+        foreach (var p in Profiles)
+        {
+            if (string.IsNullOrWhiteSpace(p.Name) || p.Name.Contains(':'))
+                throw new InvalidDataException($"Invalid profile name '{p.Name}'.");
+            foreach (var prog in p.Programs)
+            {
+                if (prog.Pin == PinMode.Signature && string.IsNullOrWhiteSpace(prog.Signer))
+                    throw new InvalidDataException($"Program '{prog.Name}' uses signature pinning but has no signer.");
+                if (prog.Pin == PinMode.Sha256 && string.IsNullOrWhiteSpace(prog.Sha256))
+                    throw new InvalidDataException($"Program '{prog.Name}' uses SHA-256 pinning but has no hash.");
+            }
+        }
+        foreach (var r in BaseServiceRules)
+            if (string.IsNullOrWhiteSpace(r.Id) || string.IsNullOrWhiteSpace(r.Service))
+                throw new InvalidDataException("Base service rules need an id and a service name.");
+    }
+}
+
+public static class AtomicFile
+{
+    /// <summary>Write to a temp file then move over the target, so a crash never leaves half a file.</summary>
+    public static void WriteAllText(string path, string contents)
+    {
+        var dir = Path.GetDirectoryName(Path.GetFullPath(path))!;
+        Directory.CreateDirectory(dir);
+        var tmp = Path.Combine(dir, "." + Path.GetFileName(path) + ".tmp");
+        File.WriteAllText(tmp, contents);
+        File.Move(tmp, path, overwrite: true);
+    }
+}

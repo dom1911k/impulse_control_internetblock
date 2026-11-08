@@ -1,0 +1,13 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- Windows-only adapters: firewall COM API, signatures, path detection, ACLs, scheduled tasks. -->
+  <PropertyGroup>
+    <TargetFramework>net8.0-windows10.0.17763.0</TargetFramework>
+    <RootNamespace>NetGuard.Windows</RootNamespace>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\NetGuard.Core\NetGuard.Core.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <PackageReference Include="System.Diagnostics.EventLog" Version="8.0.1" />
+  </ItemGroup>
+</Project>
