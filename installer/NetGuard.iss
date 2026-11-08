@@ -95,10 +95,11 @@ begin
   Exec('powershell.exe',
     '-NoProfile -NonInteractive -ExecutionPolicy Bypass -Command "Stop-Service NetGuard -Force -ErrorAction SilentlyContinue"',
     '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
-  // The service started this update itself: make sure its process is gone so the exe can be replaced.
+  // Running as SYSTEM (update started by the service): make sure the service process is gone, and close the
+  // NetGuard window in the user's session – Restart Manager can't close apps in another session.
   if IsSystemAccount then
     Exec('powershell.exe',
-      '-NoProfile -NonInteractive -ExecutionPolicy Bypass -Command "Get-Process NetGuard.Service -ErrorAction SilentlyContinue | Stop-Process -Force"',
+      '-NoProfile -NonInteractive -ExecutionPolicy Bypass -Command "Get-Process NetGuard.Service, NetGuard -ErrorAction SilentlyContinue | Stop-Process -Force; Start-Sleep -Seconds 1"',
       '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
   if ServiceRunning then
     Result := 'A NetGuard lock is active and NetGuard protects itself, so this installer can''t replace it.' + #13#10#13#10 +
