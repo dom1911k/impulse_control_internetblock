@@ -25,15 +25,16 @@ jobs:
       - name: Unit tests
         run: dotnet test tests/NetGuard.Core.Tests -c Release
 
-      - name: Publish NetGuard.exe and ngctl.exe (self-contained, single file)
+      - name: Publish NetGuard.exe, NetGuard.Service.exe and ngctl.exe (self-contained, single file)
         run: |
           dotnet publish src/NetGuard.App -c Release -o publish/NetGuard -p:Version=${{ env.NG_VERSION }}
+          dotnet publish src/NetGuard.Service -c Release -o publish/NetGuard -p:Version=${{ env.NG_VERSION }}
           dotnet publish src/NetGuard.Cli -c Release -o publish/NetGuard -p:Version=${{ env.NG_VERSION }}
 
       - name: Package zip
         shell: pwsh
         run: |
-          Copy-Item docs/TESTING-M1.md, docs/RECOVERY.md publish/NetGuard/
+          Copy-Item docs/TESTING-M2.md, docs/ACCOUNTS.md, docs/RECOVERY.md publish/NetGuard/
           Get-ChildItem publish/NetGuard -Filter *.pdb | Remove-Item
           Compress-Archive -Path publish/NetGuard/* -DestinationPath NetGuard-win-x64.zip
           # Same package under the old name, so the first ngctl builds can still update themselves.
@@ -50,6 +51,8 @@ jobs:
           if (-not (Test-Path $iscc)) { choco install innosetup -y --no-progress | Out-Null }
           & $iscc "/DAppVersion=$env:NG_VERSION" installer\NetGuard.iss
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $hash = (Get-FileHash out/NetGuardSetup.exe -Algorithm SHA256).Hash.ToLower()
+          "$hash  NetGuardSetup.exe" | Out-File -Encoding ascii -NoNewline out/NetGuardSetup.exe.sha256
 
       - uses: actions/upload-artifact@v4
         with:
@@ -76,6 +79,7 @@ jobs:
             ${{ github.event.head_commit.message }}
           files: |
             out/NetGuardSetup.exe
+            out/NetGuardSetup.exe.sha256
             NetGuard-win-x64.zip
             NetGuard-win-x64.zip.sha256
             NetGuard-ngctl-win-x64.zip

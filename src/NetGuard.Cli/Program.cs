@@ -15,7 +15,7 @@ namespace NetGuard.Cli;
 internal static class Program
 {
     private const string Help = """
-NetGuard admin console (ngctl) – milestone 1
+NetGuard admin console (ngctl)
 
 Usage (from an ADMINISTRATOR terminal):
   ngctl detect                         Find WoW, Battle.net, Agent, Spotify, Steam on this PC
@@ -28,13 +28,15 @@ Usage (from an ADMINISTRATOR terminal):
                                        restore normal internet (dead-man switch).
   ngctl apply <profile> --permanent    Apply with NO automatic revert (only use from milestone 2 on)
   ngctl recover [--dry-run] [--reason "text"]
-                                       Normal internet again: remove NetGuard rules, default outbound
-                                       Allow, re-enable rules NetGuard disabled, clean hosts file.
+                                       EMERGENCY: stop + disable the NetGuard service, then normal
+                                       internet again (remove NetGuard rules, default outbound Allow,
+                                       re-enable rules NetGuard disabled, clean hosts file).
+  ngctl service status|on|off          Show / start (and enable) / stop (and disable) the service
   ngctl diag audit on|off              Turn Windows' logging of blocked connections on/off
   ngctl diag blocked [--minutes N]     List programs whose connections were blocked (default 10 min)
   ngctl log [--tail N]                 Show the last N log entries (default 20)
   ngctl version                        Show this program's version
-  ngctl update [--check] [--yes]       Download and install the newest ngctl from GitHub Releases
+  ngctl update [--check]               Download the newest NetGuardSetup.exe and run it
                                        (--check: only look). Needs normal internet or Maintenance.
 
 Profiles in the default config: Offline, WoW, Maintenance
@@ -87,6 +89,7 @@ Profiles in the default config: Offline, WoW, Maintenance
             "diag" => Diag(a),
             "log" => ShowLog(engine, a),
             "update" => Update(engine, a),
+            "service" => Service(a),
             _ => Unknown(a.Command),
         };
     }
@@ -194,6 +197,7 @@ Profiles in the default config: Offline, WoW, Maintenance
 
         Head("NetGuard status");
         Line("ngctl version", GitHubReleases.CurrentVersion.ToString());
+        Line("Service", ServiceControl.Describe());
         Line("Active profile", state.ActiveProfile ?? "none (normal internet)");
         if (state.ActiveSinceUtc is { } since) Line("Active since", since.ToLocalTime().ToString("g"));
         if (state.TestMode is { } tm) Line("Test mode", $"auto-restore at {tm.DeadlineUtc.ToLocalTime():T}");
@@ -325,6 +329,14 @@ Profiles in the default config: Offline, WoW, Maintenance
             return 0;
         }
 
+        // Emergency recovery switches the service off first – otherwise it would heal the lock right back.
+        // (The dead-man task only ends a test lock and leaves the service alone.)
+        if (!fromTask && ServiceControl.IsInstalled() && !ServiceControl.IsDisabled())
+        {
+            ServiceControl.StopAndDisable();
+            if (!quiet) Warn("The NetGuard service is now stopped and disabled. Turn it back on with: ngctl service on");
+        }
+
         var reason = a.Value("--reason") ?? (fromTask ? "dead-man switch" : "manual recovery via ngctl");
         var (_, result) = engine.Recover(reason, fromTask ? "SYSTEM (dead-man task)" : WinEnv.CurrentUser());
         try { DeadManSwitch.Disarm(); } catch { /* best effort */ }
@@ -369,12 +381,34 @@ Profiles in the default config: Offline, WoW, Maintenance
             Ok($"Version {latest.Version} is available. Run 'ngctl update' to install it.");
             return 0;
         }
-        if (!a.Has("--yes") && !Confirm($"Type YES to update to {latest.Version}")) return 1;
 
-        var files = Updater.InstallAsync(latest, m => Console.WriteLine("  " + m)).GetAwaiter().GetResult();
-        engine.Log.Append(LogTypes.Updated, new { from = current.ToString(), to = latest.Version.ToString(), release = latest.HtmlUrl, files }, WinEnv.CurrentUser());
-        Ok($"Updated to {latest.Version} ({string.Join(", ", files)}). Run 'ngctl version' to confirm.");
+        var path = Updater.DownloadInstallerAsync(latest, m => Console.WriteLine("  " + m)).GetAwaiter().GetResult();
+        engine.Log.Append(LogTypes.Updated, new { from = current.ToString(), to = latest.Version.ToString(), release = latest.HtmlUrl, installer = path }, WinEnv.CurrentUser());
+        Updater.RunInstaller(path, silent: false);
+        Ok($"The installer for {latest.Version} has started. Follow it on screen.");
         return 0;
+    }
+
+    // ------------------------------------------------------------------ service
+
+    private static int Service(Args a)
+    {
+        switch (a.Positional(1))
+        {
+            case null or "status":
+                Line("NetGuard service", ServiceControl.Describe());
+                return 0;
+            case "on":
+                ServiceControl.EnableAndStart();
+                Ok("NetGuard service is running and starts automatically with Windows.");
+                return 0;
+            case "off":
+                ServiceControl.StopAndDisable();
+                Warn("NetGuard service stopped and disabled. The firewall rules stay as they are, but nothing repairs them now.");
+                return 0;
+            default:
+                throw new ArgumentException("Use 'ngctl service status', 'on' or 'off'.");
+        }
     }
 
     // ------------------------------------------------------------------ diag / log

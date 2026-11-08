@@ -41,13 +41,37 @@ Name: "{autoprograms}\NetGuard Recovery (manual steps)"; Filename: "{app}\RECOVE
 Name: "{autodesktop}\NetGuard"; Filename: "{app}\NetGuard.exe"; Tasks: desktopicon
 
 [Run]
-Filename: "{app}\NetGuard.exe"; Description: "Start NetGuard now"; Flags: nowait postinstall skipifsilent shellexec
+; The protection service: LocalSystem, automatic start, restarts itself if it crashes.
+Filename: "{sys}\sc.exe"; Parameters: "create NetGuard binPath= ""\""{app}\NetGuard.Service.exe\"""" start= auto DisplayName= NetGuard"; Flags: runhidden waituntilterminated; StatusMsg: "Installing the NetGuard service..."
+Filename: "{sys}\sc.exe"; Parameters: "config NetGuard binPath= ""\""{app}\NetGuard.Service.exe\"""" start= auto"; Flags: runhidden waituntilterminated
+Filename: "{sys}\sc.exe"; Parameters: "description NetGuard ""Keeps NetGuard's internet lock in place and repairs any change."""; Flags: runhidden waituntilterminated
+Filename: "{sys}\sc.exe"; Parameters: "failure NetGuard reset= 86400 actions= restart/5000/restart/5000/restart/30000"; Flags: runhidden waituntilterminated
+Filename: "{sys}\sc.exe"; Parameters: "start NetGuard"; Flags: runhidden waituntilterminated; StatusMsg: "Starting the NetGuard service..."
+; Open NetGuard afterwards with the user's normal rights (not the installer's admin rights).
+Filename: "{app}\NetGuard.exe"; Description: "Start NetGuard now"; Flags: nowait postinstall skipifsilent runasoriginaluser
+Filename: "{app}\NetGuard.exe"; Flags: nowait runasoriginaluser; Check: WizardSilent
 
 ; Uninstalling must always leave the PC with normal internet:
-; 1) NetGuard's own recovery, 2) the plain PowerShell fallback in case (1) failed.
+; 1) NetGuard's own recovery (stops + disables the service first, so it can't re-apply the lock),
+; 2) the plain PowerShell fallback in case (1) failed, 3) remove the service.
 [UninstallRun]
 Filename: "{app}\ngctl.exe"; Parameters: "recover --quiet --reason ""uninstall"""; Flags: runhidden waituntilterminated; RunOnceId: "NetGuardRecover"
-Filename: "powershell.exe"; Parameters: "-NoProfile -NonInteractive -ExecutionPolicy Bypass -Command ""Get-NetFirewallRule -Group 'NetGuard' -ErrorAction SilentlyContinue | Remove-NetFirewallRule; Set-NetFirewallProfile -All -DefaultOutboundAction Allow; schtasks /Delete /TN '\NetGuard\DeadManSwitch' /F 2>$null"""; Flags: runhidden waituntilterminated; RunOnceId: "NetGuardRecoverFallback"
+Filename: "powershell.exe"; Parameters: "-NoProfile -NonInteractive -ExecutionPolicy Bypass -Command ""Stop-Service NetGuard -Force -ErrorAction SilentlyContinue; Get-NetFirewallRule -Group 'NetGuard' -ErrorAction SilentlyContinue | Remove-NetFirewallRule; Set-NetFirewallProfile -All -DefaultOutboundAction Allow; schtasks /Delete /TN '\NetGuard\DeadManSwitch' /F 2>$null"""; Flags: runhidden waituntilterminated; RunOnceId: "NetGuardRecoverFallback"
+Filename: "{sys}\sc.exe"; Parameters: "delete NetGuard"; Flags: runhidden waituntilterminated; RunOnceId: "NetGuardDeleteService"
 
 [UninstallDelete]
 Type: files; Name: "{app}\*.old"
+
+[Code]
+// Updating: stop the service so its exe can be replaced. The firewall rules stay in place meanwhile,
+// so an active lock is not interrupted; the service starts again at the end of setup.
+function PrepareToInstall(var NeedsRestart: Boolean): String;
+var
+  ResultCode: Integer;
+begin
+  Exec('powershell.exe',
+    '-NoProfile -NonInteractive -ExecutionPolicy Bypass -Command "Stop-Service NetGuard -Force -ErrorAction SilentlyContinue; ' +
+    'Get-Process NetGuard.Service -ErrorAction SilentlyContinue | Stop-Process -Force"',
+    '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+  Result := '';
+end;

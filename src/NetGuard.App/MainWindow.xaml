@@ -3,8 +3,7 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         Title="NetGuard" Width="1040" Height="760" MinWidth="860" MinHeight="620"
         WindowStartupLocation="CenterScreen" Background="#F4F6F8"
-        FontFamily="Segoe UI" FontSize="14" Icon="Assets/netguard.ico"
-        Closing="OnClosing">
+        FontFamily="Segoe UI" FontSize="14" Icon="Assets/netguard.ico">
     <DockPanel>
         <!-- ===== Status banner ===== -->
         <Border x:Name="Banner" DockPanel.Dock="Top" Background="#2E3A46" Padding="28,20">
@@ -44,8 +43,11 @@
                     <StackPanel Margin="4,14,0,0">
                         <Border Background="#E8F3F0" CornerRadius="8" Padding="14,10" Margin="0,0,14,14">
                             <TextBlock TextWrapping="Wrap" Foreground="#24584C">
-                                <Run FontWeight="SemiBold" Text="Test mode."/>
-                                <Run Text="Every lock started here ends by itself after the time you choose, even if you close NetGuard or restart the PC. Nothing here can lock you out."/>
+                                <Run FontWeight="SemiBold" Text="Switch"/>
+                                <Run Text="starts a real lock with no end time. Stricter profiles are always one click away; looser ones need an administrator (the calm unlock process comes in milestone 4)."/>
+                                <LineBreak/>
+                                <Run FontWeight="SemiBold" Text="Test lock"/>
+                                <Run Text="ends by itself after the time you choose – only possible while you have normal internet."/>
                             </TextBlock>
                         </Border>
                         <StackPanel Orientation="Horizontal" Margin="0,0,0,14">
@@ -59,7 +61,7 @@
                         </StackPanel>
                         <UniformGrid x:Name="ProfileCards" Columns="3"/>
                         <TextBlock x:Name="NoConfigHint" Style="{StaticResource Body}" Visibility="Collapsed"
-                                   Text="NetGuard isn't set up yet. Open the Setup tab first."/>
+                                   Text="NetGuard isn't set up yet. An administrator needs to open the Setup tab first."/>
                     </StackPanel>
                 </ScrollViewer>
             </TabItem>
@@ -71,7 +73,7 @@
                         <Border Style="{StaticResource Card}">
                             <StackPanel>
                                 <TextBlock Style="{StaticResource H2}" Text="1 · Find your apps"/>
-                                <TextBlock Style="{StaticResource Body}" Text="NetGuard looks for World of Warcraft, Battle.net, the Blizzard Agent, Spotify and Steam on this PC."/>
+                                <TextBlock Style="{StaticResource Body}" Text="NetGuard looks for World of Warcraft, Battle.net, the Blizzard Agent, Spotify and Steam on this PC. Setup needs an administrator (Tools → Restart as administrator)."/>
                                 <StackPanel Orientation="Horizontal">
                                     <Button Content="Find apps" Style="{StaticResource Primary}" Click="OnDetect"/>
                                 </StackPanel>
@@ -123,8 +125,22 @@
                     <WrapPanel Margin="4,14,0,0" ItemWidth="470">
                         <Border Style="{StaticResource Card}">
                             <StackPanel>
+                                <TextBlock Style="{StaticResource H2}" Text="You"/>
+                                <TextBlock x:Name="AccountText" Style="{StaticResource Body}" Text=""/>
+                                <Button x:Name="ElevateButton" Content="Restart as administrator" Style="{StaticResource Secondary}" HorizontalAlignment="Left" Click="OnElevate"/>
+                            </StackPanel>
+                        </Border>
+                        <Border Style="{StaticResource Card}">
+                            <StackPanel>
+                                <TextBlock Style="{StaticResource H2}" Text="Protection service"/>
+                                <TextBlock x:Name="ServiceText" Style="{StaticResource Body}" Text=""/>
+                                <Button x:Name="StartServiceButton" Content="Start protection service" Style="{StaticResource Secondary}" HorizontalAlignment="Left" Click="OnStartService"/>
+                            </StackPanel>
+                        </Border>
+                        <Border Style="{StaticResource Card}">
+                            <StackPanel>
                                 <TextBlock Style="{StaticResource H2}" Text="Restore normal internet"/>
-                                <TextBlock Style="{StaticResource Body}" Text="Removes all NetGuard rules, sets the firewall back to normal, switches the Windows rules NetGuard turned off back on, and cleans the hosts file."/>
+                                <TextBlock Style="{StaticResource Body}" Text="Administrator only. Removes all NetGuard rules, sets the firewall back to normal, switches the Windows rules NetGuard turned off back on, and cleans the hosts file."/>
                                 <Button Content="Restore normal internet…" Style="{StaticResource Secondary}" HorizontalAlignment="Left" Click="OnRecover"/>
                             </StackPanel>
                         </Border>
@@ -138,7 +154,7 @@
                         <Border Style="{StaticResource Card}">
                             <StackPanel>
                                 <TextBlock Style="{StaticResource H2}" Text="Find blocked programs"/>
-                                <TextBlock Style="{StaticResource Body}" Text="If something that should work doesn't (e.g. Battle.net can't log in): start recording, try again, then show what was blocked."/>
+                                <TextBlock Style="{StaticResource Body}" Text="Administrator only. If something that should work doesn't (e.g. Battle.net can't log in): start recording, try again, then show what was blocked."/>
                                 <WrapPanel>
                                     <Button Content="Start recording" Style="{StaticResource Secondary}" Click="OnAuditOn"/>
                                     <Button Content="Stop recording" Style="{StaticResource Secondary}" Click="OnAuditOff"/>

@@ -12,7 +12,26 @@ namespace NetGuard.Windows;
 [SupportedOSPlatform("windows")]
 public sealed class AuthenticodeVerifier : ISignatureVerifier
 {
+    // The service re-checks every 30 s; cache by path + size + modification time so unchanged files aren't re-verified.
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<string, SignatureInfo> _cache = new(StringComparer.OrdinalIgnoreCase);
+
     public SignatureInfo Check(string path)
+    {
+        string key;
+        try
+        {
+            var fi = new FileInfo(path);
+            key = $"{fi.FullName}|{fi.Length}|{fi.LastWriteTimeUtc.Ticks}";
+        }
+        catch (Exception e) { return new SignatureInfo(false, null, e.Message); }
+        if (_cache.TryGetValue(key, out var hit)) return hit;
+        var result = CheckUncached(path);
+        if (_cache.Count > 2000) _cache.Clear();
+        _cache[key] = result;
+        return result;
+    }
+
+    private static SignatureInfo CheckUncached(string path)
     {
         try
         {

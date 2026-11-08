@@ -4,8 +4,8 @@
   <trustInfo xmlns="urn:schemas-microsoft-com:asm.v2">
     <security>
       <requestedPrivileges xmlns="urn:schemas-microsoft-com:asm.v3">
-        <!-- Changing the firewall needs admin rights: Windows asks once when NetGuard starts. -->
-        <requestedExecutionLevel level="requireAdministrator" uiAccess="false" />
+        <!-- Runs with normal rights: all firewall changes are made by the NetGuard service. -->
+        <requestedExecutionLevel level="asInvoker" uiAccess="false" />
       </requestedPrivileges>
     </security>
   </trustInfo>

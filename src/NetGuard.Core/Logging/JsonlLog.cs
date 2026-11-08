@@ -14,6 +14,10 @@ public static class LogTypes
     public const string ConfigCreated = "config-created";
     public const string Rejected = "program-rejected";
     public const string Updated = "updated";
+    public const string RulesUpdated = "rules-updated";
+    public const string ServiceStarted = "service-started";
+    public const string ServiceStopped = "service-stopped";
+    public const string Refused = "request-refused";
 }
 
 /// <summary>Append-only JSON-lines log (one JSON object per line).</summary>

@@ -10,6 +10,13 @@ public sealed class DisabledRuleRecord
     public DateTimeOffset DisabledAtUtc { get; set; }
 }
 
+public sealed class AppliedRule
+{
+    public string Name { get; set; } = "";
+    public string Program { get; set; } = "";
+    public string Action { get; set; } = "";
+}
+
 public sealed class TestModeInfo
 {
     public DateTimeOffset DeadlineUtc { get; set; }
@@ -30,6 +37,11 @@ public sealed class NetGuardState
 
     /// <summary>Foreign (non-NetGuard) outbound allow rules NetGuard switched off. Re-enabled on recovery.</summary>
     public List<DisabledRuleRecord> DisabledForeignRules { get; set; } = new();
+
+    /// <summary>NetGuard rules as last applied. Lets self-healing tell "changed by someone" from "new file after an update".</summary>
+    public List<AppliedRule> AppliedRules { get; set; } = new();
+
+    public DateTimeOffset? LastTamperUtc { get; set; }
 
     public static NetGuardState Load(string path)
     {

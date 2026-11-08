@@ -10,6 +10,11 @@ namespace NetGuard.Core;
 
 public sealed record ActionError(string Action, string Error);
 
+public sealed record HealResult(Plan Plan, ExecutionResult Result, List<PlanAction> Tamper)
+{
+    public bool WasTampered => Tamper.Count > 0;
+}
+
 public sealed class ExecutionResult
 {
     public List<PlanAction> Done { get; } = new();
@@ -70,6 +75,7 @@ public sealed class Engine
         state.ActiveProfile = desired.ProfileName;
         state.ActiveSinceUtc = DateTimeOffset.UtcNow;
         state.TestMode = testMode;
+        state.AppliedRules = ToApplied(desired);
         SaveState(state);
 
         foreach (var r in desired.RejectedPrograms)
@@ -104,6 +110,7 @@ public sealed class Engine
         state.ActiveProfile = null;
         state.ActiveSinceUtc = null;
         state.TestMode = null;
+        state.AppliedRules.Clear();
         SaveState(state);
 
         _log.Append(LogTypes.Recovery, new
@@ -113,6 +120,77 @@ public sealed class Engine
             errors = result.Errors,
         }, actor);
         return (plan, result);
+    }
+
+    /// <summary>
+    /// Self-healing: make the firewall match the active profile again. Returns null when no profile
+    /// is active, otherwise what was found and done. Tampering (firewall off, rule deleted or edited,
+    /// new allow rule, hosts file edited) is logged as "tamper"; harmless changes such as a new
+    /// versioned Battle.net folder after an update are logged as "rules-updated".
+    /// </summary>
+    public HealResult? Heal(NetGuardConfig cfg, string actor = "NetGuard service")
+    {
+        using var _ = EngineLock.Acquire(_paths);
+        var state = LoadState();
+        if (state.ActiveProfile == null) return null;
+
+        var desired = BuildDesired(cfg, state.ActiveProfile);
+        var snap = _fw.GetSnapshot();
+        var plan = Planner.Diff(desired, snap, HostsFile.IsUpToDate(ReadHosts(), desired.BlockedHosts), cfg.ProtectedRuleGroups);
+        if (plan.IsEmpty) return new HealResult(plan, new ExecutionResult(), new List<PlanAction>());
+
+        var tamper = plan.Actions.Where(a => IsTamper(a, state.AppliedRules, snap)).ToList();
+        var result = Execute(plan, state);
+
+        state.AppliedRules = ToApplied(desired);
+        if (tamper.Count > 0) state.LastTamperUtc = DateTimeOffset.UtcNow;
+        SaveState(state);
+
+        var changes = result.Done.Select(a => a.Describe()).ToList();
+        if (tamper.Count > 0)
+            _log.Append(LogTypes.Tamper, new
+            {
+                profile = desired.ProfileName,
+                found = tamper.Select(a => a.Describe()).ToList(),
+                changes,
+                errors = result.Errors,
+            }, actor);
+        else
+            _log.Append(LogTypes.RulesUpdated, new { profile = desired.ProfileName, changes, errors = result.Errors }, actor);
+
+        return new HealResult(plan, result, tamper);
+    }
+
+    private static List<AppliedRule> ToApplied(DesiredState d) =>
+        d.Rules.Select(r => new AppliedRule { Name = r.Name, Program = r.Program, Action = r.Action.ToString() }).ToList();
+
+    /// <summary>Was this difference caused by someone (tamper) or by NetGuard's own expectations changing (an app update)?</summary>
+    internal static bool IsTamper(PlanAction a, List<AppliedRule> lastApplied, FirewallSnapshot snap)
+    {
+        AppliedRule? Last(string name) => lastApplied.FirstOrDefault(r => r.Name == name);
+        List<FwRule> Current(string name) => snap.Rules.Where(r => r.IsNetGuard && r.Name == name).ToList();
+
+        switch (a)
+        {
+            case SetDefaultOutboundAction or EnableFirewallAction or DisableForeignRuleAction or WriteHostsAction:
+                return true;
+            case AddRuleAction add:
+                // Missing although we created it last time → deleted by someone.
+                return Last(add.Rule.Name) != null && Current(add.Rule.Name).Count == 0;
+            case RemoveRuleAction rm:
+            {
+                var last = Last(rm.Name);
+                if (last == null) return true; // a "NetGuard:" rule we never made
+                var cur = Current(rm.Name);
+                // Still exactly what we applied last time → only our expectations changed (update), not tamper.
+                var untouched = cur.Count == 1 && cur[0].Enabled && cur[0].Direction == FwDirection.Out &&
+                                string.Equals(cur[0].Program, last.Program, StringComparison.OrdinalIgnoreCase) &&
+                                cur[0].Action.ToString() == last.Action;
+                return !untouched;
+            }
+            default:
+                return false;
+        }
     }
 
     public ExecutionResult Execute(Plan plan, NetGuardState state)

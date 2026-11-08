@@ -24,6 +24,7 @@ public static class GitHubReleases
     public const string PackageZip = "NetGuard-win-x64.zip";
     /// <summary>Name used by the first builds (ngctl only). Still published so those can update.</summary>
     public const string NgctlZip = "NetGuard-ngctl-win-x64.zip";
+    public const string SetupExe = "NetGuardSetup.exe";
     public static string ReleasesPage => $"https://github.com/{Owner}/{Repo}/releases";
     public static string LatestApiUrl => $"https://api.github.com/repos/{Owner}/{Repo}/releases/latest";
 

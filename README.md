@@ -3,8 +3,9 @@
 A self-control internet lock for a Windows gaming PC. It blocks all internet except the programs
 the active profile allows. Daily use is simple, and undoing it in a weak moment is deliberately hard.
 
-> **Status: milestone 1 of 5 – core engine, window app (test mode only), console tool, installer.**
-> No background service, cooldown or tray icon yet. Test steps: [docs/TESTING-M1.md](docs/TESTING-M1.md).
+> **Status: milestone 2 of 5 – protection service with self-healing, window app, installer.**
+> No cooldown unlock or tray icon yet. Test steps: [docs/TESTING-M2.md](docs/TESTING-M2.md).
+> Account separation guide: [docs/ACCOUNTS.md](docs/ACCOUNTS.md).
 > Emergency: [docs/RECOVERY.md](docs/RECOVERY.md).
 >
 > **Download:** [NetGuardSetup.exe](https://github.com/dom1911k/impulse_control_internetblock/releases/latest/download/NetGuardSetup.exe)
@@ -41,6 +42,12 @@ Rocksmith works in Steam Offline Mode.
 * **Test mode.** Every development lock has a dead-man switch. ngctl counts down and restores
   internet. Independently, a one-shot SYSTEM scheduled task runs the PowerShell recovery commands
   30 s after the deadline (and at boot), even if ngctl crashed or was closed.
+* **The service is in charge.** `NetGuard.Service` (LocalSystem, auto-start, restarts itself if
+  killed) re-applies the active profile at boot, checks every 30 s and ~1 s after any change under
+  the firewall's registry key, restarts the firewall services if stopped, and logs every repair as
+  *tamper*. The window app runs with normal rights and sends requests over the `NetGuard` named
+  pipe; the service identifies the caller and decides. Stricter profiles are instant; looser ones
+  need an elevated administrator (milestone 4 adds the cooldown process).
 * **Everything is logged** as JSON lines in `C:\ProgramData\NetGuard\log.jsonl`. That folder is
   writable only by SYSTEM and Administrators; standard users can read the log.
 
@@ -59,7 +66,9 @@ Rocksmith works in Steam Offline Mode.
 ```
 src/NetGuard.Core/       config, profile → rule planner, drift diff, hosts file, state, JSONL log (no Windows APIs)
 src/NetGuard.Windows/    COM firewall, Authenticode check, app detection, ACLs, dead-man task, blocked-connection diag
-src/NetGuard.App/        NetGuard.exe – the window app (WPF): profiles, setup, history, tools, updates
+src/NetGuard.Service/    NetGuard.Service.exe – Windows service (LocalSystem): owns every firewall change,
+                         self-heals every 30 s and on any firewall change, answers the app over a named pipe
+src/NetGuard.App/        NetGuard.exe – the window app (WPF, normal rights): asks the service, never changes anything itself
 src/NetGuard.Cli/        ngctl.exe – admin console (same functions, for scripts and troubleshooting)
 installer/               Inno Setup script → NetGuardSetup.exe (uninstall always restores normal internet)
 tests/NetGuard.Core.Tests/
@@ -67,10 +76,8 @@ docs/                    TESTING-M1.md, RECOVERY.md
 .github/workflows/       Windows build: tests, both exes, installer, GitHub Release
 ```
 
-Coming next: `NetGuard.Service` (milestone 2), tray icon + first-run wizard (3),
-cooldown/commitments (4), finished installer with service + recovery shortcut (5).
-From milestone 3 the window app talks to the service instead of changing the firewall itself, so it
-will run as your standard user.
+Coming next: tray icon + first-run wizard (3), cooldown/commitments/hash pinning (4),
+recovery shortcut, weekly summary and installer polish (5).
 
 ## Updating
 

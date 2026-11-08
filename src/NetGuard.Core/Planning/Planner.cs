@@ -5,6 +5,8 @@ namespace NetGuard.Core.Planning;
 
 public static class Planner
 {
+    public const string ReasonNotInProfile = "not part of the active profile";
+
     private static readonly FwProfileType[] AllProfiles = { FwProfileType.Domain, FwProfileType.Private, FwProfileType.Public };
 
     /// <summary>
@@ -48,7 +50,7 @@ public static class Planner
 
         foreach (var (name, _) in existing.OrderBy(k => k.Key, StringComparer.Ordinal))
             if (!wanted.Contains(name))
-                plan.Add(new RemoveRuleAction(name, "not part of profile " + desired.ProfileName));
+                plan.Add(new RemoveRuleAction(name, ReasonNotInProfile));
 
         // No foreign outbound allow rules may stay active in allow-list profiles
         if (desired.DisableForeignAllowRules)

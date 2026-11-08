@@ -60,8 +60,21 @@ public static class Report
         return sb.ToString();
     }
 
+    public static string ProfileDescription(ProfileDefinition p)
+    {
+        if (p.Kind == ProfileKind.AllowAll)
+            return "Everything is online except Steam. For Windows Update, Defender updates and installing things.";
+        if (p.Programs.Count == 0)
+            return "No internet at all. Only name lookups (DNS) and the clock sync stay on.";
+        return "Online: " + string.Join(", ", p.Programs.Select(x => x.Name)) + ". Everything else is offline. Steam is always blocked.";
+    }
+
     public static string EventName(string? type) => type switch
     {
+        LogTypes.RulesUpdated => "Program files updated",
+        LogTypes.ServiceStarted => "Protection started",
+        LogTypes.ServiceStopped => "Protection stopped",
+        LogTypes.Refused => "Request refused",
         LogTypes.ProfileApplied => "Profile applied",
         LogTypes.ApplyError => "Problem while applying",
         LogTypes.Recovery => "Normal internet restored",
@@ -78,9 +91,12 @@ public static class Report
     {
         if (entry["data"] is not JsonObject d) return "";
         var parts = new List<string>();
-        foreach (var key in new[] { "profile", "reason", "minutes", "path", "from", "to", "endedEarly" })
+        foreach (var key in new[] { "profile", "reason", "request", "minutes", "path", "from", "to", "endedEarly" })
             if (d[key] is { } v) parts.Add($"{key}: {v.ToJsonString().Trim('"')}");
-        if (d["changes"] is JsonArray c) parts.Add($"{c.Count} change(s)");
+        if (d["changes"] is JsonArray c)
+            parts.Add((string?)entry["type"] == LogTypes.Tamper && c.Count > 0
+                ? $"undid: {c[0]?.GetValue<string>()}{(c.Count > 1 ? $" (+{c.Count - 1} more)" : "")}"
+                : $"{c.Count} change(s)");
         if (d["errors"] is JsonArray er && er.Count > 0)
         {
             var first = er[0] is JsonObject fe ? $"{(string?)fe["action"]}: {(string?)fe["error"]}" : er[0]?.ToJsonString();

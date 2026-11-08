@@ -10,13 +10,6 @@ public partial class App : Application
     {
         DispatcherUnhandledException += OnUnhandled;
         Updater.CleanupOldFiles();
-        if (!WinEnv.IsElevatedAdmin())
-        {
-            MessageBox.Show("NetGuard needs administrator rights to change the firewall.\n\nRight-click NetGuard.exe → Run as administrator.",
-                "NetGuard", MessageBoxButton.OK, MessageBoxImage.Warning);
-            Shutdown(2);
-            return;
-        }
         base.OnStartup(e);
     }
 

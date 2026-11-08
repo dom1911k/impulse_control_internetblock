@@ -4,17 +4,27 @@ Use this if you need normal internet back and the normal way doesn't work.
 Everything here needs an **administrator** terminal
 (Start → type `Terminal` → right-click → **Run as administrator**).
 
-## 1. The normal way
+## 1. The normal way (administrator)
+
+NetGuard → **Tools → Restart as administrator** (enter the admin password) →
+**Tools → Restore normal internet…**
+
+The service stays installed and running; it just has no lock to keep.
+
+## 1b. Emergency: NetGuard's console tool
+
+If the NetGuard window doesn't work, in an administrator terminal:
 
 ```powershell
-cd C:\NetGuard-test        # wherever ngctl.exe is
+cd "C:\Program Files\NetGuard"
 .\ngctl recover
 ```
 
-This removes all NetGuard firewall rules, sets default outbound back to **Allow**, re-enables the
-Windows rules NetGuard switched off, removes NetGuard's block from the hosts file, and logs the recovery.
+This **stops and disables the NetGuard service** (so it can't put the lock back), removes all
+NetGuard firewall rules, sets default outbound back to **Allow**, re-enables the Windows rules
+NetGuard switched off, cleans the hosts file and logs the recovery.
 
-(From milestone 2 on, also stop the service first: `Stop-Service NetGuard`.)
+Turn protection back on later with `.\ngctl service on` (or by running NetGuardSetup.exe again).
 
 ## 2. Manual fallback (if ngctl itself is broken)
 
