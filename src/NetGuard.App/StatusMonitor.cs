@@ -15,6 +15,8 @@ public sealed class StatusMonitor
     public string Problem { get; private set; } = "";
     public bool ServiceDown => Status == null;
     public bool HasLoaded { get; private set; }
+    /// <summary>Difference between NetGuard's trusted time and this PC's clock.</summary>
+    public TimeSpan ServerOffset { get; private set; }
 
     public event Action? Changed;
 
@@ -31,6 +33,7 @@ public sealed class StatusMonitor
             var r = await _client.SendAsync(new IpcRequest { Command = IpcCommands.Status }, TimeSpan.FromSeconds(10));
             Status = r.Status;
             Problem = "";
+            if (r.Status != null) ServerOffset = r.Status.ServerNowUtc - DateTimeOffset.UtcNow;
         }
         catch (Exception ex)
         {

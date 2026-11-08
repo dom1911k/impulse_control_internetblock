@@ -9,6 +9,8 @@ using NetGuard.Core.Ipc;
 using NetGuard.Core.Logging;
 using NetGuard.Core.Policy;
 using NetGuard.Core.Reporting;
+using NetGuard.Core.Rules;
+using NetGuard.Core.State;
 using NetGuard.Core.Security;
 using NetGuard.Core.Updates;
 using NetGuard.Windows;
@@ -34,11 +36,28 @@ public sealed class Guard
 
     private readonly IHostApplicationLifetime _lifetime;
 
+    private readonly LockRules _rules = new();
+    private readonly TrustedClock _clock;
+    private DateTimeOffset _lastTick;
+
+    /// <summary>NetGuard's trusted time (ignores changes to the Windows clock).</summary>
+    public DateTimeOffset Now => _clock.Now;
+
     public Guard(ILogger<Guard> logger, IHostApplicationLifetime lifetime)
     {
         _logger = logger;
         _lifetime = lifetime;
         _engine = new Engine(new ComFirewall(), _verifier, new NetGuardPaths(), HostsFile.DefaultPath);
+        NetGuardState initial;
+        try { initial = _engine.LoadState(); } catch { initial = new NetGuardState(); }
+        _clock = TrustedClock.System(initial.TrustedNowUtc);
+        _clock.JumpDetected += jump =>
+        {
+            try { _engine.Log.Append(LogTypes.ClockJump, new { reason = $"The Windows clock was changed by {jump:g}; NetGuard keeps its own time." }, ServiceActor); } catch { }
+        };
+        _lastTick = _clock.Now;
+        // Games outside their play time are blocked in every profile.
+        _engine.ExtraBlocked = cfg => _rules.BlockedGamePrograms(cfg, _engine.LoadState(), _clock.Now);
     }
 
     public Engine Engine => _engine;
@@ -59,10 +78,45 @@ public sealed class Guard
             var untilDeadline = tm.DeadlineUtc - DateTimeOffset.UtcNow;
             if (untilDeadline < interval) return untilDeadline < TimeSpan.FromSeconds(1) ? TimeSpan.FromSeconds(1) : untilDeadline;
         }
+        // Wake up exactly when play time ends, a cooldown is over, a commitment ends…
+        if (TryLoadConfig() is { } cfg && _rules.NextEvent(cfg, state, Now) is { } next)
+        {
+            var until = next - Now + TimeSpan.FromSeconds(1);
+            if (until < interval) return until < TimeSpan.FromSeconds(1) ? TimeSpan.FromSeconds(1) : until;
+        }
         return interval;
     }
 
     /// <summary>One self-healing pass.</summary>
+    /// <summary>Time-based rules: count play time, expire unlocks, apply due plan changes, switch when time is up.</summary>
+    private void RunRules(NetGuardConfig cfg)
+    {
+        var now = Now;
+        var elapsed = now - _lastTick;
+        _lastTick = now;
+        if (elapsed > TimeSpan.FromMinutes(5) || elapsed < TimeSpan.Zero) elapsed = TimeSpan.Zero; // after sleep/hibernate: don't count it
+
+        var state = _engine.LoadState();
+        var r = _rules.Tick(cfg, state, now, elapsed);
+        state.TrustedNowUtc = now;
+        _engine.SaveState(state);
+        if (r.ConfigChanged) cfg.Save(_engine.Paths.ConfigFile);
+        foreach (var e in r.Events) _engine.Log.Append(e.Type, e.Data, ServiceActor);
+        if (r.SwitchTo != null) SwitchInternal(cfg, r.SwitchTo, ServiceActor, viaUnlock: false, autoReason: r.SwitchReason);
+    }
+
+    private void SwitchInternal(NetGuardConfig cfg, string target, string actor, bool viaUnlock, string? autoReason = null)
+    {
+        var from = _engine.LoadState().ActiveProfile;
+        DeadManSwitch.Disarm(); // a permanent lock must not be undone by a leftover test-mode safety task
+        _engine.ApplyProfile(cfg, target, actor, null);
+        var state = _engine.LoadState();
+        _rules.OnSwitched(cfg, state, from, cfg.FindProfile(target)?.Name ?? target, Now, viaUnlock);
+        _engine.SaveState(state);
+        if (autoReason != null) _engine.Log.Append(LogTypes.AutoSwitch, new { profile = target, from, reason = autoReason }, actor);
+        Protect();
+    }
+
     public void Tick()
     {
         lock (_gate)
@@ -70,10 +124,9 @@ public sealed class Guard
             try
             {
                 var state = _engine.LoadState();
-                if (state.ActiveProfile == null) return;
 
                 // A test lock whose time is up ends here (the dead-man task is only the backup).
-                if (state.TestMode is { } tm && tm.DeadlineUtc <= DateTimeOffset.UtcNow)
+                if (state.ActiveProfile != null && state.TestMode is { } tm && tm.DeadlineUtc <= DateTimeOffset.UtcNow)
                 {
                     TestMode.End(_engine, ServiceActor, endedEarly: false);
                     Protect();
@@ -82,6 +135,10 @@ public sealed class Guard
 
                 var cfg = TryLoadConfig();
                 if (cfg == null) return;
+
+                RunRules(cfg);
+                state = _engine.LoadState();
+                if (state.ActiveProfile == null) return;
 
                 // Windows Firewall itself must run: if its services are stopped, no rule applies.
                 var found = new List<string>();
@@ -196,6 +253,15 @@ public sealed class Guard
                     IpcCommands.InspectFile => InspectFile(req),
                     IpcCommands.ProgramAdd or IpcCommands.ProgramRemove or IpcCommands.ProfileAdd or IpcCommands.ProfileRemove
                         => EditConfig(req, caller),
+                    IpcCommands.UnlockRequest => UnlockRequest(req, caller),
+                    IpcCommands.UnlockConfirm => UnlockConfirm(req, caller),
+                    IpcCommands.UnlockCancel => UnlockCancel(caller),
+                    IpcCommands.Commit => Commit(req, caller),
+                    IpcCommands.Grace => Grace(req, caller),
+                    IpcCommands.PlanGet => PlanGet(),
+                    IpcCommands.PlanSet => PlanSet(req, caller),
+                    IpcCommands.PlanCancel => PlanCancel(req, caller),
+                    IpcCommands.ProgramReapprove => Reapprove(req, caller),
                     _ => IpcResponse.Fail($"Unknown request '{req.Command}'."),
                 };
             }
@@ -254,12 +320,32 @@ public sealed class Guard
             RecoveryCodeExists = RecoveryCode.Exists(state),
             RecoveryCodeCreatedUtc = state.RecoveryCodeCreatedUtc,
             SelfProtectionActive = _protectionOn,
+            ServerNowUtc = Now,
+            CommitmentProfile = state.Commitment is { } c && c.UntilUtc > Now ? c.Profile : null,
+            CommitmentUntilUtc = state.Commitment is { } c2 && c2.UntilUtc > Now ? c2.UntilUtc : null,
+            MaintenanceUntilUtc = state.MaintenanceUntilUtc,
         };
         if (cfg == null) return dto;
 
+        var now = dto.ServerNowUtc;
+        dto.UnlocksLeftToday = Math.Max(0, cfg.Timings.MaxUnlockRequestsPerDay - _rules.UnlockRequestsToday(state, now));
+        if (state.PendingUnlock is { } u)
+            dto.Unlock = new UnlockDto
+            {
+                TargetProfile = u.TargetProfile, Reason = u.Reason, RequestedUtc = u.RequestedUtc, ReadyUtc = u.ReadyUtc, ExpiresUtc = u.ExpiresUtc,
+                Passage = now >= u.ReadyUtc ? u.Passage : null,
+            };
+        if (state.ActiveProfile != null)
+        {
+            var since = state.LastMaintenanceUtc ?? state.ActiveSinceUtc ?? now;
+            dto.MaintenanceReminder = now - since > TimeSpan.FromDays(cfg.Timings.MaintenanceReminderDays);
+        }
+        if (_engine.LastDesired is { } ld && string.Equals(ld.ProfileName, state.ActiveProfile, StringComparison.OrdinalIgnoreCase))
+            dto.RejectedFiles = ld.RejectedPrograms.Select(r => $"{r.EntryName}: {r.Path} – {r.Detail}").ToList();
+
         foreach (var p in cfg.Profiles)
         {
-            var sw = ProfilePolicy.CanSwitch(cfg, state.ActiveProfile, p.Name);
+            var sw = _rules.CanSwitch(cfg, state, p.Name, now);
             if (sw.Allowed && !RecoveryCode.Exists(state))
                 sw = new SwitchDecision(false, "Create your recovery code first (Setup step 3). It's your way out in an emergency.");
             var test = ProfilePolicy.CanStartTest(state.ActiveProfile);
@@ -274,6 +360,9 @@ public sealed class Guard
                 SwitchHint = sw.Reason,
                 TestAllowed = test.Allowed,
                 TestHint = test.Reason,
+                UnlockAllowed = !sw.Allowed && _rules.CanRequestUnlock(cfg, state, p.Name, now).Allowed,
+                UnlockHint = sw.Allowed ? "" : _rules.CanRequestUnlock(cfg, state, p.Name, now).Reason,
+                Play = p.Plan == null ? null : ToDto(_rules.GetPlayStatus(cfg, state, p, now)),
             });
         }
         return dto;
@@ -285,17 +374,11 @@ public sealed class Guard
         var state = _engine.LoadState();
         var target = req.Profile ?? throw new ArgumentException("Which profile?");
         if (!RecoveryCode.Exists(state))
-            return Refuse(caller, req, "Create your recovery code first (Setup step 3). Without it there's no way out of a lock in an emergency.");
-        var decision = ProfilePolicy.CanSwitch(cfg, state.ActiveProfile, target);
+            return Refuse(caller, req, "Create your recovery code first (Setup). Without it there's no way out of a lock in an emergency.");
+        var decision = _rules.CanSwitch(cfg, state, target, Now);
         if (!decision.Allowed) return Refuse(caller, req, decision.Reason);
-
-        // A permanent lock must not be undone by a leftover test-mode safety task.
-        DeadManSwitch.Disarm();
-        var (desired, _, result) = _engine.ApplyProfile(cfg, target, caller.Name, null);
-        Protect();
-        return result.Success
-            ? IpcResponse.Success($"{desired.ProfileName} is now active.\n\n" + Report.Result(result))
-            : IpcResponse.Fail(Report.Result(result));
+        SwitchInternal(cfg, target, caller.Name, viaUnlock: false);
+        return IpcResponse.Success($"{cfg.FindProfile(target)!.Name} is now active.");
     }
 
     private IpcResponse TestStart(IpcRequest req, CallerInfo caller)
@@ -325,6 +408,10 @@ public sealed class Guard
     private IpcResponse Recover(IpcRequest req, CallerInfo caller)
     {
         if (_engine.LoadState().ActiveProfile != null && CheckCode(req, caller) is { } refused) return refused;
+        var before = _engine.LoadState();
+        before.Commitment = null;
+        if (before.PendingUnlock is { } pu) { pu.Status = UnlockStatus.Cancelled; pu.ClosedUtc = Now; }
+        _engine.SaveState(before);
         var (plan, result) = _engine.Recover("emergency restore with recovery code", caller.Name);
         try { DeadManSwitch.Disarm(); } catch { }
         Protect();
@@ -571,5 +658,142 @@ public sealed class Guard
         // A lock is active: apply the change right away (e.g. a removed program goes offline now).
         if (state.ActiveProfile != null) _engine.Heal(cfg, caller.Name);
         return IpcResponse.Success(char.ToUpper(change[0]) + change[1..] + ".");
+    }
+
+    // ================================================================ milestone 4: unlock, commitments, play time
+
+    private static PlayDto ToDto(PlayStatus p) => new()
+    {
+        Allowed = p.Allowed, EndsUtc = p.EndsUtc, NextStartUtc = p.NextStartUtc, UsedTodayMinutes = p.UsedTodayMinutes,
+        DailyLimitMinutes = p.DailyLimitMinutes, UsedWeekMinutes = p.UsedWeekMinutes, WeeklyLimitMinutes = p.WeeklyLimitMinutes,
+        GraceAvailable = p.GraceAvailable, GraceActive = p.GraceActive, Reason = p.Reason,
+    };
+
+    private IpcResponse UnlockRequest(IpcRequest req, CallerInfo caller)
+    {
+        var cfg = RequireConfig();
+        var state = _engine.LoadState();
+        var r = _rules.RequestUnlock(cfg, state, req.Profile ?? throw new ArgumentException("Which profile?"), req.Text ?? "", Now);
+        _engine.SaveState(state);
+        _engine.Log.Append(LogTypes.UnlockRequested, new { target = r.TargetProfile, from = r.FromProfile, reason = r.Reason }, caller.Name);
+        return IpcResponse.Success($"Unlock requested. You can confirm it from {_rules.LocalText(r.ReadyUtc)} to {_rules.LocalText(r.ExpiresUtc)}.");
+    }
+
+    private IpcResponse UnlockConfirm(IpcRequest req, CallerInfo caller)
+    {
+        var cfg = RequireConfig();
+        var state = _engine.LoadState();
+        var pending = state.PendingUnlock;
+        string target;
+        try { target = _rules.ConfirmUnlock(state, req.Text ?? "", Now); }
+        finally { _engine.SaveState(state); }
+        _engine.Log.Append(LogTypes.UnlockConfirmed, new { target, reason = pending?.Reason }, caller.Name);
+        SwitchInternal(cfg, target, caller.Name, viaUnlock: true);
+        var after = _engine.LoadState();
+        return IpcResponse.Success(after.MaintenanceUntilUtc is { } mu
+            ? $"{target} is active until {_rules.LocalText(mu)}; then NetGuard goes back to {after.MaintenanceReturnTo ?? "your previous profile"}."
+            : $"{target} is now active.");
+    }
+
+    private IpcResponse UnlockCancel(CallerInfo caller)
+    {
+        var state = _engine.LoadState();
+        var pending = state.PendingUnlock;
+        _rules.CancelUnlock(state, Now);
+        _engine.SaveState(state);
+        _engine.Log.Append(LogTypes.UnlockCancelled, new { target = pending?.TargetProfile }, caller.Name);
+        return IpcResponse.Success("Unlock request cancelled. (It still counts towards today's requests.)");
+    }
+
+    private IpcResponse Commit(IpcRequest req, CallerInfo caller)
+    {
+        var cfg = RequireConfig();
+        var state = _engine.LoadState();
+        if (!RecoveryCode.Exists(state)) return Refuse(caller, req, "Create your recovery code first (Setup).");
+        var until = req.Until ?? throw new ArgumentException("Until when?");
+        var switchTo = _rules.Commit(cfg, state, req.Profile ?? throw new ArgumentException("Which profile?"), until, Now);
+        _engine.SaveState(state);
+        _engine.Log.Append(LogTypes.CommitmentMade, new { profile = state.Commitment!.Profile, until = _rules.LocalText(until) }, caller.Name);
+        if (switchTo != null) SwitchInternal(cfg, switchTo, caller.Name, viaUnlock: false);
+        return IpcResponse.Success($"Committed to {state.Commitment!.Profile} until {_rules.LocalText(until)}.");
+    }
+
+    private IpcResponse Grace(IpcRequest req, CallerInfo caller)
+    {
+        var cfg = RequireConfig();
+        var state = _engine.LoadState();
+        var until = _rules.TakeGrace(cfg, state, req.Profile ?? state.ActiveProfile ?? "", Now);
+        _engine.SaveState(state);
+        _engine.Log.Append(LogTypes.GraceTaken, new { profile = state.ActiveProfile, until = _rules.LocalText(until) }, caller.Name);
+        return IpcResponse.Success($"{cfg.Timings.GraceMinutes} more minutes, until {_rules.LocalText(until)}. Tomorrow's play time is {cfg.Timings.GraceMinutes} minutes shorter.");
+    }
+
+    private IpcResponse PlanGet()
+    {
+        var cfg = RequireConfig();
+        var state = _engine.LoadState();
+        var plans = cfg.Profiles.Where(p => p.Kind == ProfileKind.Allowlist && p.Programs.Count > 0).Select(p =>
+        {
+            var pending = state.PendingPlanChanges.FirstOrDefault(c => string.Equals(c.Profile, p.Name, StringComparison.OrdinalIgnoreCase));
+            return new PlanDto
+            {
+                Profile = p.Name,
+                Plan = p.Plan,
+                Programs = p.Programs.Select(e => e.Name).ToList(),
+                HasPending = pending != null,
+                PendingPlan = pending?.Plan,
+                PendingEffectiveUtc = pending?.EffectiveUtc,
+                FallbackChoices = cfg.Profiles.Where(x => x.Kind == ProfileKind.Allowlist && x.Plan == null && x.Name != p.Name).Select(x => x.Name).ToList(),
+            };
+        }).ToList();
+        return new IpcResponse { Ok = true, Plans = plans };
+    }
+
+    private IpcResponse PlanSet(IpcRequest req, CallerInfo caller)
+    {
+        var cfg = RequireConfig();
+        var state = _engine.LoadState();
+        var profile = req.Profile ?? throw new ArgumentException("Which profile?");
+        var pending = _rules.ChangePlan(cfg, state, profile, req.Plan, Now);
+        _engine.SaveState(state);
+        if (pending == null)
+        {
+            cfg.Validate();
+            cfg.Save(_engine.Paths.ConfigFile);
+            _engine.Log.Append(LogTypes.PlanChanged, new { profile, change = req.Plan == null ? "plan removed" : "stricter plan, applied now" }, caller.Name);
+            if (state.ActiveProfile != null) _engine.Heal(cfg, caller.Name);
+            return IpcResponse.Success("Saved – the plan is stricter (or equal), so it applies right away.");
+        }
+        _engine.Log.Append(LogTypes.PlanChangePending, new { profile, effective = _rules.LocalText(pending.EffectiveUtc) }, caller.Name);
+        return IpcResponse.Success($"This plan is looser than the current one, so it takes effect in {cfg.Timings.PlanLoosenDelayHours} hours " +
+                                   $"({_rules.LocalText(pending.EffectiveUtc)}). You can cancel it until then.");
+    }
+
+    private IpcResponse PlanCancel(IpcRequest req, CallerInfo caller)
+    {
+        var state = _engine.LoadState();
+        var removed = state.PendingPlanChanges.RemoveAll(c => string.Equals(c.Profile, req.Profile, StringComparison.OrdinalIgnoreCase));
+        _engine.SaveState(state);
+        if (removed > 0) _engine.Log.Append(LogTypes.PlanChanged, new { profile = req.Profile, change = "waiting change cancelled" }, caller.Name);
+        return IpcResponse.Success(removed > 0 ? "The waiting change was cancelled." : "There was no waiting change.");
+    }
+
+    /// <summary>An unsigned program changed (update or swap): accept its new version. Loosening → normal internet or Maintenance only.</summary>
+    private IpcResponse Reapprove(IpcRequest req, CallerInfo caller)
+    {
+        var cfg = RequireConfig();
+        var state = _engine.LoadState();
+        var d = ProfilePolicy.CanLoosenConfig(cfg, state.ActiveProfile);
+        if (!d.Allowed) return Refuse(caller, req, d.Reason.Replace("Adding programs", "Re-approving a changed program"));
+        var p = cfg.FindProfile(req.Profile ?? "") ?? throw new InvalidOperationException("Which profile?");
+        var e = p.Programs.FirstOrDefault(x => string.Equals(x.Name, req.Entry, StringComparison.OrdinalIgnoreCase))
+                ?? throw new InvalidOperationException("Which program?");
+        if (e.Pin != PinMode.Sha256) throw new InvalidOperationException("Only programs pinned to an exact version can be re-approved.");
+        var file = e.Paths.SelectMany(x => NetGuard.Core.Paths.PathGlob.Expand(x)).FirstOrDefault() ?? throw new InvalidOperationException("The file wasn't found.");
+        e.Sha256 = ProgramResolver.Sha256Of(file);
+        cfg.Save(_engine.Paths.ConfigFile);
+        _engine.Log.Append(LogTypes.ConfigChanged, new { change = $"re-approved the new version of {e.Name}", path = file }, caller.Name);
+        if (state.ActiveProfile != null) _engine.Heal(cfg, caller.Name);
+        return IpcResponse.Success($"The current version of {e.Name} is approved.");
     }
 }

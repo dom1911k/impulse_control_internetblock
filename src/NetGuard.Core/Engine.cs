@@ -53,8 +53,14 @@ public sealed class Engine
     public NetGuardState LoadState() => NetGuardState.Load(_paths.StateFile);
     public void SaveState(NetGuardState s) => s.Save(_paths.StateFile);
 
+    /// <summary>Extra programs to block right now (games outside their play time). Set by the service.</summary>
+    public Func<NetGuardConfig, IEnumerable<ProgramEntry>>? ExtraBlocked { get; set; }
+
+    /// <summary>The last desired state built (the service reads rejected files from it).</summary>
+    public DesiredState? LastDesired { get; private set; }
+
     public DesiredState BuildDesired(NetGuardConfig cfg, string profile) =>
-        DesiredStateBuilder.Build(cfg, profile, _resolver, _expandEnv);
+        LastDesired = DesiredStateBuilder.Build(cfg, profile, _resolver, _expandEnv, ExtraBlocked?.Invoke(cfg));
 
     public Plan PlanApply(NetGuardConfig cfg, DesiredState desired) =>
         Planner.Diff(desired, _fw.GetSnapshot(), HostsFile.IsUpToDate(ReadHosts(), desired.BlockedHosts), cfg.ProtectedRuleGroups);

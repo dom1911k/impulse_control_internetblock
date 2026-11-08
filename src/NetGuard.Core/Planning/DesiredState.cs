@@ -22,7 +22,10 @@ public static class DesiredStateBuilder
 {
     public const string ManagedDescription = "Managed by NetGuard. Manual changes are undone automatically.";
 
-    public static DesiredState Build(NetGuardConfig cfg, string profileName, ProgramResolver resolver, Func<string, string>? expandEnv = null)
+    public const string GameBlockProfile = "PlayTime";
+
+    public static DesiredState Build(NetGuardConfig cfg, string profileName, ProgramResolver resolver, Func<string, string>? expandEnv = null,
+        IEnumerable<ProgramEntry>? extraBlocked = null)
     {
         expandEnv ??= Environment.ExpandEnvironmentVariables;
         var profile = cfg.FindProfile(profileName)
@@ -87,6 +90,17 @@ public static class DesiredStateBuilder
                     FwProtocol.Any, null, $"{ManagedDescription} (always blocked: {entry.Name})"));
                 if (d.AllowedPrograms.Any(a => FwRule.PathEq(a.Path, r.Path)))
                     d.Warnings.Add($"{r.Path} is both allowed and always-blocked; it stays BLOCKED.");
+            }
+        }
+
+        // 4) games outside their play time – blocked in every profile, Maintenance included
+        foreach (var entry in extraBlocked ?? Enumerable.Empty<ProgramEntry>())
+        {
+            foreach (var r in resolver.Resolve(entry, checkPins: false))
+            {
+                d.BlockedPrograms.Add(r);
+                d.Rules.Add(new RuleSpec(names.Next(GameBlockProfile, r.Path), FwAction.Block, r.Path, null,
+                    FwProtocol.Any, null, $"{ManagedDescription} (outside play time: {entry.Name})"));
             }
         }
 

@@ -128,6 +128,16 @@ public sealed class ProgramsPanel : Grid
             if (!canRemove) remove.ToolTip = _config.LoosenHint;
             DockPanel.SetDock(remove, Dock.Right);
             head.Children.Add(remove);
+            if (!isBlocked && prog.Pin == "Sha256" && prog.Files.Any(f => !f.Allowed))
+            {
+                var name = prog.Name;
+                var re = Btn("Re-approve new version", true, async () => await ReapproveAsync(name));
+                re.IsEnabled = _config.CanLoosen;
+                re.ToolTip = _config.CanLoosen ? "The program changed (probably an update). Accept the new version." : _config.LoosenHint;
+                re.Margin = new Thickness(8, 0, 0, 0);
+                DockPanel.SetDock(re, Dock.Right);
+                head.Children.Add(re);
+            }
             head.Children.Add(new TextBlock { Text = prog.Name, FontSize = 16, FontWeight = FontWeights.SemiBold, Foreground = Ink, VerticalAlignment = VerticalAlignment.Center });
             card.Children.Add(head);
             card.Children.Add(new TextBlock { Text = prog.PinDescription, Foreground = Muted, FontSize = 12, Margin = new Thickness(0, 2, 0, 6) });
@@ -192,6 +202,17 @@ public sealed class ProgramsPanel : Grid
         var where = _selected == AlwaysBlocked ? "the always-blocked list" : _selected;
         if (MessageBox.Show(_owner, $"Remove {entry} from {where}?", "Remove program", MessageBoxButton.OKCancel, MessageBoxImage.Question) != MessageBoxResult.OK) return;
         try { _status.Text = (await _client.CallAsync(new IpcRequest { Command = IpcCommands.ProgramRemove, Profile = _selected, Entry = entry })).Text; }
+        catch (Exception e) { _status.Text = e.Message; }
+        var keep = _status.Text;
+        await RefreshAsync();
+        _status.Text = keep;
+    }
+
+    private async Task ReapproveAsync(string entry)
+    {
+        if (MessageBox.Show(_owner, $"{entry} changed since you added it. Only re-approve it if you know why (e.g. it updated itself).\n\nApprove the current version?",
+                "Re-approve", MessageBoxButton.OKCancel, MessageBoxImage.Question) != MessageBoxResult.OK) return;
+        try { _status.Text = (await _client.CallAsync(new IpcRequest { Command = IpcCommands.ProgramReapprove, Profile = _selected, Entry = entry })).Text; }
         catch (Exception e) { _status.Text = e.Message; }
         var keep = _status.Text;
         await RefreshAsync();

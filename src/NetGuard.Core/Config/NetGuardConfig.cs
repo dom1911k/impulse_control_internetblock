@@ -55,6 +55,40 @@ public sealed class ProfileDefinition
     public string Name { get; set; } = "";
     public ProfileKind Kind { get; set; } = ProfileKind.Allowlist;
     public List<ProgramEntry> Programs { get; set; } = new();
+
+    /// <summary>Optional play-time plan: when this profile may be active, and for how long.</summary>
+    public PlayPlan? Plan { get; set; }
+}
+
+/// <summary>A weekly timetable plus daily/weekly limits for a game profile.</summary>
+public sealed class PlayPlan
+{
+    public List<PlayWindow> Windows { get; set; } = new();
+    public int? DailyLimitMinutes { get; set; }
+    public int? WeeklyLimitMinutes { get; set; }
+    /// <summary>Program entries of the profile that count as "the game": blocked everywhere outside play time.</summary>
+    public List<string> GamePrograms { get; set; } = new();
+    /// <summary>Where NetGuard switches when play time is over.</summary>
+    public string FallbackProfile { get; set; } = "Offline";
+}
+
+public sealed class PlayWindow
+{
+    public DayOfWeek Day { get; set; }
+    public string Start { get; set; } = "19:00";
+    /// <summary>"24:00" means midnight at the end of the day.</summary>
+    public string End { get; set; } = "23:00";
+
+    public int StartMinute => ParseTime(Start);
+    public int EndMinute => ParseTime(End);
+
+    public static int ParseTime(string s)
+    {
+        var parts = s.Trim().Split(':');
+        if (parts.Length != 2 || !int.TryParse(parts[0], out var h) || !int.TryParse(parts[1], out var m) || h < 0 || h > 24 || m < 0 || m > 59 || (h == 24 && m != 0))
+            throw new InvalidDataException($"'{s}' is not a time like 19:30.");
+        return h * 60 + m;
+    }
 }
 
 public sealed class TimingSettings
@@ -68,6 +102,10 @@ public sealed class TimingSettings
     public int ConfirmPassageLength { get; set; } = 400;
     public int MaintenanceMaxMinutes { get; set; } = 45;
     public int MaintenanceReminderDays { get; set; } = 14;
+    public int GraceMinutes { get; set; } = 10;
+    /// <summary>Looser play-plan changes take effect only after this many hours.</summary>
+    public int PlanLoosenDelayHours { get; set; } = 72;
+    public int MaxCommitmentDays { get; set; } = 30;
 }
 
 public sealed class NetGuardConfig
@@ -136,6 +174,23 @@ public sealed class NetGuardConfig
         foreach (var r in BaseServiceRules)
             if (string.IsNullOrWhiteSpace(r.Id) || string.IsNullOrWhiteSpace(r.Service))
                 throw new InvalidDataException("Base service rules need an id and a service name.");
+        foreach (var p in Profiles.Where(p => p.Plan != null)) ValidatePlan(p);
+    }
+
+    public void ValidatePlan(ProfileDefinition p)
+    {
+        var plan = p.Plan!;
+        if (p.Kind != ProfileKind.Allowlist) throw new InvalidDataException("Only locking profiles can have a play plan.");
+        foreach (var w in plan.Windows)
+            if (w.EndMinute <= w.StartMinute) throw new InvalidDataException($"{w.Day} {w.Start}–{w.End}: the end must be after the start.");
+        if (plan.DailyLimitMinutes is < 0 or > 1440) throw new InvalidDataException("The daily limit must be between 0 and 24 hours.");
+        if (plan.WeeklyLimitMinutes is < 0 or > 10080) throw new InvalidDataException("The weekly limit must be between 0 and 168 hours.");
+        var fb = FindProfile(plan.FallbackProfile) ?? throw new InvalidDataException($"Fallback profile '{plan.FallbackProfile}' doesn't exist.");
+        if (fb.Plan != null || fb.Kind != ProfileKind.Allowlist || string.Equals(fb.Name, p.Name, StringComparison.OrdinalIgnoreCase))
+            throw new InvalidDataException("The fallback must be a locking profile without its own play plan (usually Offline).");
+        foreach (var g in plan.GamePrograms)
+            if (!p.Programs.Any(e => string.Equals(e.Name, g, StringComparison.OrdinalIgnoreCase)))
+                throw new InvalidDataException($"'{g}' is not one of {p.Name}'s programs.");
     }
 }
 

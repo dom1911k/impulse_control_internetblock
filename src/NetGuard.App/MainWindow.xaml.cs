@@ -38,11 +38,17 @@ public partial class MainWindow : Window
         _timer.Tick += OnTick;
         Loaded += OnLoaded;
         _monitor.Changed += OnStatusChanged;
+        // The passage has to be typed: no pasting, no dropping.
+        DataObject.AddPastingHandler(PassageInput, (_, e) => e.CancelCommand());
+        PassageInput.CommandBindings.Add(new CommandBinding(ApplicationCommands.Paste, (_, _) => { }, (_, e) => { e.CanExecute = false; e.Handled = true; }));
+        PlayTime = new PlayTimePanel(this, _client);
+        PlayTab.Content = PlayTime;
         Programs = new ProgramsPanel(this, _client);
         ProgramsTab.Content = Programs;
         Tabs.SelectionChanged += async (_, e) =>
         {
             if (e.Source == Tabs && Tabs.SelectedItem == ProgramsTab) await Programs.RefreshAsync();
+            if (e.Source == Tabs && Tabs.SelectedItem == PlayTab) await PlayTime.RefreshAsync();
             if (e.Source == Tabs && Tabs.SelectedItem == HistoryTab) await LoadHistoryAsync();
         };
         Closing += (_, e) =>
@@ -54,6 +60,7 @@ public partial class MainWindow : Window
     }
 
     public ProgramsPanel Programs { get; }
+    public PlayTimePanel PlayTime { get; }
 
     public void AllowClose() { _allowClose = true; Close(); }
 
@@ -96,6 +103,123 @@ public partial class MainWindow : Window
             var left = deadline - DateTimeOffset.UtcNow;
             CountdownText.Text = left > TimeSpan.Zero ? left.ToString(@"mm\:ss") : "00:00";
         }
+        if (_status?.Profiles.FirstOrDefault(x => x.IsActive)?.Play is { EndsUtc: { } pe })
+            PlayLeftText.Text = TimeLeft(pe - ServerNow);
+        UpdateUnlockPanel();
+    }
+
+    /// <summary>NetGuard's trusted time (the PC clock may have been changed).</summary>
+    private DateTimeOffset ServerNow => DateTimeOffset.UtcNow + _monitor.ServerOffset;
+
+    private static string TimeLeft(TimeSpan t)
+    {
+        if (t < TimeSpan.Zero) t = TimeSpan.Zero;
+        return t.TotalHours >= 1 ? $"{(int)t.TotalHours}:{t.Minutes:00}:{t.Seconds:00}" : $"{t.Minutes:00}:{t.Seconds:00}";
+    }
+
+    private static string Fmt(DateTimeOffset utc)
+    {
+        var l = utc.ToLocalTime();
+        return l.Date == DateTime.Today ? l.ToString("HH:mm") : l.Date == DateTime.Today.AddDays(1) ? "tomorrow " + l.ToString("HH:mm") : l.ToString("ddd dd.MM. HH:mm");
+    }
+
+    private static string Mins(int m) => m >= 60 ? $"{m / 60}h{(m % 60 > 0 ? $" {m % 60}min" : "")}" : $"{m}min";
+
+    private static string PlayLine(PlayDto p)
+    {
+        var parts = new List<string>();
+        parts.Add(p.Allowed ? $"🎮 Play time now{(p.EndsUtc is { } e ? $" until {Fmt(e)}" : "")}" : "⏸ " + p.Reason);
+        if (p.DailyLimitMinutes is { } d) parts.Add($"today {Mins(p.UsedTodayMinutes)} of {Mins(d)}");
+        if (p.WeeklyLimitMinutes is { } w) parts.Add($"this week {Mins(p.UsedWeekMinutes)} of {Mins(w)}");
+        return string.Join(" · ", parts);
+    }
+
+    // ================================================================ unlock requests
+
+    private string? _shownPassage;
+
+    private void UpdateUnlockPanel()
+    {
+        var u = _status?.Unlock;
+        if (u == null)
+        {
+            UnlockPanel.Visibility = Visibility.Collapsed;
+            _shownPassage = null;
+            return;
+        }
+        UnlockPanel.Visibility = Visibility.Visible;
+        var now = ServerNow;
+        if (now < u.ReadyUtc)
+        {
+            UnlockTitle.Text = $"Unlock to {u.TargetProfile} – waiting {TimeLeft(u.ReadyUtc - now)}";
+            UnlockInfo.Text = $"Your reason: \"{u.Reason}\"\n\nThe waiting time can't be shortened. When it's over you'll have " +
+                              $"{(u.ExpiresUtc - u.ReadyUtc).TotalMinutes:0} minutes to confirm by retyping a passage. If you don't, the request simply expires. " +
+                              "You can also cancel it – it still counts as one of today's requests.";
+            ConfirmArea.Visibility = Visibility.Collapsed;
+            ConfirmUnlockButton.Visibility = Visibility.Collapsed;
+        }
+        else
+        {
+            UnlockTitle.Text = $"Unlock to {u.TargetProfile} – {TimeLeft(u.ExpiresUtc - now)} left to confirm";
+            UnlockInfo.Text = $"Your reason: \"{u.Reason}\"\nStill want this? If not, just let it expire.";
+            ConfirmArea.Visibility = Visibility.Visible;
+            ConfirmUnlockButton.Visibility = Visibility.Visible;
+            if (u.Passage != null && _shownPassage != u.Passage)
+            {
+                _shownPassage = u.Passage;
+                PassageText.Text = u.Passage;
+                PassageInput.Text = "";
+            }
+        }
+    }
+
+    private void OnPassageChanged(object sender, TextChangedEventArgs e)
+    {
+        var expected = _shownPassage ?? "";
+        var typed = PassageInput.Text;
+        var firstWrong = Enumerable.Range(0, Math.Min(typed.Length, expected.Length)).FirstOrDefault(i => typed[i] != expected[i], -1);
+        if (typed.Length > expected.Length) firstWrong = expected.Length;
+        PassageProgress.Text = firstWrong >= 0
+            ? $"✗ Typo at character {firstWrong + 1} – fix it to continue."
+            : $"✓ Correct so far – {typed.Length} of {expected.Length} characters.";
+        PassageProgress.Foreground = Brush(firstWrong >= 0 ? "#B03A2E" : "#2E7D6B");
+    }
+
+    private async Task RequestUnlockAsync(string profile)
+    {
+        if (_status == null) return;
+        var reason = Dialogs.AskUnlockReason(this, profile, _status.UnlocksLeftToday);
+        if (reason == null) return;
+        await RunAsync($"Unlock request: {profile}", new IpcRequest { Command = IpcCommands.UnlockRequest, Profile = profile, Text = reason });
+    }
+
+    private async void OnConfirmUnlock(object sender, RoutedEventArgs e) =>
+        await RunAsync("Confirm unlock", new IpcRequest { Command = IpcCommands.UnlockConfirm, Text = PassageInput.Text });
+
+    private async void OnCancelUnlock(object sender, RoutedEventArgs e)
+    {
+        if (MessageBox.Show(this, "Cancel the unlock request? It still counts as one of today's requests.", "Unlock",
+                MessageBoxButton.OKCancel, MessageBoxImage.Question) != MessageBoxResult.OK) return;
+        await RunAsync("Cancel unlock", new IpcRequest { Command = IpcCommands.UnlockCancel });
+    }
+
+    private async void OnGrace(object sender, RoutedEventArgs e)
+    {
+        if (MessageBox.Show(this, "Take 10 more minutes? This is possible once a day, and tomorrow's play time is 10 minutes shorter.",
+                "Extra minutes", MessageBoxButton.OKCancel, MessageBoxImage.Question) != MessageBoxResult.OK) return;
+        await RunAsync("Extra minutes", new IpcRequest { Command = IpcCommands.Grace });
+    }
+
+    private async void OnCommit(object sender, RoutedEventArgs e)
+    {
+        if (_status == null) return;
+        var choice = Dialogs.AskCommitment(this, _status);
+        if (choice == null) return;
+        var (profile, until) = choice.Value;
+        if (MessageBox.Show(this, $"Commit to {profile} until {until:dddd HH:mm}?\n\nUntil then nothing looser is possible – no unlock requests. " +
+                                  "You can extend a commitment, but never shorten it.",
+                "Commit", MessageBoxButton.OKCancel, MessageBoxImage.Question) != MessageBoxResult.OK) return;
+        await RunAsync("Commit", new IpcRequest { Command = IpcCommands.Commit, Profile = profile, Until = new DateTimeOffset(until) });
     }
 
     private Task RefreshStatusAsync() => _monitor.RefreshAsync();
@@ -111,6 +235,8 @@ public partial class MainWindow : Window
                 : "NetGuard can't enforce or repair anything right now. Run NetGuardSetup.exe to install or repair it.";
             Banner.Background = Brush("#7A2E2E");
             CountdownPanel.Visibility = Visibility.Collapsed;
+            PlayPanel.Visibility = Visibility.Collapsed;
+            UnlockPanel.Visibility = Visibility.Collapsed;
             ServiceText.Text = $"Service: {SafeServiceState()}.";
             StartServiceButton.Visibility = Visibility.Visible;
             BuildProfileCards(null);
@@ -140,13 +266,37 @@ public partial class MainWindow : Window
         }
         else
         {
-            StatusTitle.Text = $"{profile} mode";
+            StatusTitle.Text = $"{profile} mode" + (_status.CommitmentUntilUtc is { } cu ? $" – committed until {Fmt(cu)}" : "");
+            var active = _status.Profiles.FirstOrDefault(x => x.IsActive);
             StatusDetail.Text = _status.TestDeadlineUtc is { } d
                 ? $"Test lock – normal internet comes back by itself at {d.ToLocalTime():T}."
-                : $"Active since {_status.ActiveSinceUtc?.ToLocalTime():g}. NetGuard keeps it in place and repairs any change.";
+                : _status.MaintenanceUntilUtc is { } mu
+                    ? $"Maintenance until {Fmt(mu)}, then back to your previous profile."
+                    : active?.Play is { Allowed: true, EndsUtc: { } pe }
+                        ? $"Play time until {Fmt(pe)}. Then NetGuard switches to Offline."
+                        : $"Active since {_status.ActiveSinceUtc?.ToLocalTime():g}. NetGuard keeps it in place and repairs any change.";
             Banner.Background = Brush(Theme.ProfileColor(profile));
         }
         CountdownPanel.Visibility = _status.TestDeadlineUtc != null ? Visibility.Visible : Visibility.Collapsed;
+        var activePlay = _status.Profiles.FirstOrDefault(x => x.IsActive)?.Play;
+        PlayPanel.Visibility = _status.TestDeadlineUtc == null && activePlay is { Allowed: true, EndsUtc: not null } ? Visibility.Visible : Visibility.Collapsed;
+        GraceButton.Visibility = activePlay?.GraceAvailable == true ? Visibility.Visible : Visibility.Collapsed;
+        PlayLabel.Text = activePlay?.GraceActive == true ? "Extra minutes left" : "Play time left";
+
+        CommitText.Text = _status.CommitmentUntilUtc is { } cut
+            ? $"Committed to {_status.CommitmentProfile} until {Fmt(cut)}."
+            : _status.ActiveProfile == null ? "" : "No commitment.";
+        CommitButton.IsEnabled = _status.RecoveryCodeExists && _status.ConfigExists;
+
+        var notices = new List<string>();
+        notices.AddRange(_status.RejectedFiles.Select(r => "⚠ Blocked because it changed or isn't genuine: " + r +
+                                                           ". If it's a normal update: Programs → Re-approve (with normal internet or in Maintenance)."));
+        if (_status.MaintenanceReminder)
+            notices.Add($"🛠 No Maintenance for a while – Windows and Defender haven't been able to update. Consider a Maintenance unlock soon.");
+        NoticeText.Text = string.Join("\n", notices);
+        NoticeText.Visibility = notices.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
+
+        UpdateUnlockPanel();
         BuildProfileCards(_status);
     }
 
@@ -163,7 +313,8 @@ public partial class MainWindow : Window
     {
         // Only rebuild when something visible changed (keeps buttons from flickering every 3 s).
         var sig = status == null ? "down" :
-            string.Join("|", status.Profiles.Select(p => $"{p.Name}{p.IsActive}{p.SwitchAllowed}{p.TestAllowed}{p.SwitchHint}")) + status.ConfigExists;
+            string.Join("|", status.Profiles.Select(p => $"{p.Name}{p.IsActive}{p.SwitchAllowed}{p.TestAllowed}{p.SwitchHint}{p.UnlockAllowed}{p.UnlockHint}" +
+                                                    (p.Play == null ? "" : PlayLine(p.Play)))) + status.ConfigExists + status.UnlocksLeftToday;
         if (sig == _cardsSignature) return;
         _cardsSignature = sig;
 
@@ -192,13 +343,14 @@ public partial class MainWindow : Window
             stack.Children.Add(new TextBlock { Text = p.Description, Style = (Style)FindResource("Body"), MinHeight = 60 });
 
             var name = p.Name;
+            var needsUnlock = !p.IsActive && !p.SwitchAllowed && p.UnlockAllowed;
             var switchBtn = new Button
             {
-                Content = p.IsActive ? "Active" : $"Switch to {p.Name}",
-                Style = (Style)FindResource("Primary"),
-                IsEnabled = !p.IsActive && p.SwitchAllowed,
+                Content = p.IsActive ? "Active" : needsUnlock ? "Request unlock…" : $"Switch to {p.Name}",
+                Style = (Style)FindResource(needsUnlock ? "Secondary" : "Primary"),
+                IsEnabled = !p.IsActive && (p.SwitchAllowed || p.UnlockAllowed),
             };
-            switchBtn.Click += async (_, _) => await SwitchAsync(name);
+            switchBtn.Click += async (_, _) => { if (needsUnlock) await RequestUnlockAsync(name); else await SwitchAsync(name); };
             var testBtn = new Button { Content = "Test lock", Style = (Style)FindResource("Secondary"), IsEnabled = p.TestAllowed, ToolTip = p.TestAllowed ? null : p.TestHint };
             testBtn.Click += async (_, _) => await StartTestAsync(name);
             var previewBtn = new Button { Content = "Preview", Style = (Style)FindResource("Secondary") };
@@ -210,8 +362,15 @@ public partial class MainWindow : Window
             buttons.Children.Add(previewBtn);
             stack.Children.Add(buttons);
 
+            if (p.Play is { } play)
+                stack.Children.Add(new TextBlock
+                {
+                    Text = PlayLine(play), Style = (Style)FindResource("Body"), FontSize = 12, Margin = new Thickness(0, 4, 0, 0),
+                    Foreground = Brush(play.Allowed ? "#2E7D6B" : "#5F6B7A"),
+                });
             if (!p.IsActive && !p.SwitchAllowed)
-                stack.Children.Add(new TextBlock { Text = p.SwitchHint, Style = (Style)FindResource("Body"), FontSize = 12, Margin = new Thickness(0, 4, 0, 0) });
+                stack.Children.Add(new TextBlock { Text = p.UnlockAllowed ? $"Looser than now – needs an unlock request ({_status!.UnlocksLeftToday} left today)." : (p.UnlockHint.Length > 0 ? p.UnlockHint : p.SwitchHint),
+                    Style = (Style)FindResource("Body"), FontSize = 12, Margin = new Thickness(0, 4, 0, 0) });
 
             ProfileCards.Children.Add(new Border { Style = (Style)FindResource("Card"), Child = stack });
         }
@@ -260,8 +419,9 @@ public partial class MainWindow : Window
         var p = _status?.Profiles.FirstOrDefault(x => x.Name == profile);
         if (p == null) return;
         var msg = $"Switch to {p.Name} now?\n\n{p.Description}\n\n" +
-                  "This lock has no end time. Stricter profiles are always one click away. Going back to something looser " +
-                  "needs the unlock process (milestone 4) – until then only the emergency restore with your recovery code.";
+                  (p.Play != null
+                      ? "Play time counts while this profile is active. When it's over, NetGuard switches to Offline by itself."
+                      : "This lock has no end time. Stricter profiles are always one click away; looser ones need an unlock request.");
         if (MessageBox.Show(this, msg, "Switch profile", MessageBoxButton.OKCancel, MessageBoxImage.Question) != MessageBoxResult.OK) return;
         await RunAsync($"Switch to {p.Name}", new IpcRequest { Command = IpcCommands.Switch, Profile = profile });
     }

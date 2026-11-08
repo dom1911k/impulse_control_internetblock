@@ -18,6 +18,9 @@ public sealed class TrayIcon : IDisposable
     private bool _first = true;
     private bool _wasDown;
     private DateTimeOffset? _warnedDeadline;
+    private DateTimeOffset? _warnedUnlock;
+    private DateTimeOffset? _warnedMaintenance;
+    private readonly HashSet<(DateTimeOffset, int)> _warnedPlay = new();
 
     public TrayIcon(StatusMonitor monitor, Action open, Action exit)
     {
@@ -48,10 +51,17 @@ public sealed class TrayIcon : IDisposable
         else if (s.ActiveProfile == null) { text = "NetGuard – normal internet"; color = Theme.NormalInternet; }
         else
         {
+            var play = s.Profiles.FirstOrDefault(p => p.IsActive)?.Play;
             text = s.TestDeadlineUtc is { } d
                 ? $"NetGuard – {s.ActiveProfile} test lock until {d.ToLocalTime():t}"
-                : $"NetGuard – {s.ActiveProfile} mode";
-            color = Theme.ProfileColor(s.ActiveProfile);
+                : s.Unlock is { } u
+                    ? $"NetGuard – {s.ActiveProfile}, unlock to {u.TargetProfile} pending"
+                    : s.CommitmentUntilUtc is { } cu
+                        ? $"NetGuard – {s.ActiveProfile}, committed until {cu.ToLocalTime():ddd HH:mm}"
+                        : play is { Allowed: true, EndsUtc: { } pe }
+                            ? $"NetGuard – {s.ActiveProfile}, play time until {pe.ToLocalTime():HH:mm}"
+                            : $"NetGuard – {s.ActiveProfile} mode";
+            color = s.Unlock != null ? "#C2611F" : Theme.ProfileColor(s.ActiveProfile);
         }
         _icon.Text = text.Length > 127 ? text[..127] : text;
         _icon.Icon = IconFor(color);
@@ -77,6 +87,32 @@ public sealed class TrayIcon : IDisposable
         {
             _warnedDeadline = d;
             _icon.ShowBalloonTip(5000, "NetGuard", "The test lock ends in less than a minute.", Forms.ToolTipIcon.Info);
+        }
+
+        var now = s.ServerNowUtc;
+        if (s.Unlock is { } u && now >= u.ReadyUtc && _warnedUnlock != u.ReadyUtc)
+        {
+            _warnedUnlock = u.ReadyUtc;
+            _icon.ShowBalloonTip(8000, "NetGuard", $"The waiting time is over. You can confirm the unlock to {u.TargetProfile} for the next " +
+                                                   $"{(u.ExpiresUtc - now).TotalMinutes:0} minutes – or let it expire.", Forms.ToolTipIcon.Info);
+        }
+
+        if (s.Profiles.FirstOrDefault(p => p.IsActive)?.Play is { Allowed: true, EndsUtc: { } end } play)
+        {
+            var left = end - now;
+            foreach (var mark in new[] { 15, 5, 1 })
+            {
+                if (left > TimeSpan.FromMinutes(mark) || left <= TimeSpan.FromMinutes(mark) - TimeSpan.FromSeconds(50) || _warnedPlay.Contains((end, mark))) continue;
+                _warnedPlay.Add((end, mark));
+                var extra = play.GraceAvailable ? " You can take 10 more minutes once today (open NetGuard)." : "";
+                _icon.ShowBalloonTip(8000, "NetGuard", $"{mark} minute{(mark > 1 ? "s" : "")} of play time left.{extra}", Forms.ToolTipIcon.Warning);
+            }
+        }
+
+        if (s.MaintenanceUntilUtc is { } mu && mu - now <= TimeSpan.FromMinutes(5) && mu > now && _warnedMaintenance != mu)
+        {
+            _warnedMaintenance = mu;
+            _icon.ShowBalloonTip(6000, "NetGuard", "Maintenance ends in 5 minutes.", Forms.ToolTipIcon.Info);
         }
     }
 

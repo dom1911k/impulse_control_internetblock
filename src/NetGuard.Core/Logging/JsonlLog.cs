@@ -23,6 +23,17 @@ public static class LogTypes
     public const string ProtectionRelaxed = "protection-relaxed";
     public const string UpdateStarted = "update-started";
     public const string ConfigChanged = "config-changed";
+    public const string UnlockRequested = "unlock-requested";
+    public const string UnlockConfirmed = "unlock-confirmed";
+    public const string UnlockCancelled = "unlock-cancelled";
+    public const string UnlockExpired = "unlock-expired";
+    public const string CommitmentMade = "commitment";
+    public const string CommitmentEnded = "commitment-ended";
+    public const string AutoSwitch = "auto-switch";
+    public const string GraceTaken = "grace";
+    public const string PlanChanged = "plan-changed";
+    public const string PlanChangePending = "plan-change-pending";
+    public const string ClockJump = "clock-changed";
 }
 
 /// <summary>Append-only JSON-lines log (one JSON object per line).</summary>

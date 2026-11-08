@@ -17,11 +17,18 @@
                     <TextBlock x:Name="StatusTitle" Text="Loading…" FontSize="26" FontWeight="SemiBold" Foreground="White" Margin="0,2,0,2"/>
                     <TextBlock x:Name="StatusDetail" Text="" Foreground="#DCE4EC" TextWrapping="Wrap"/>
                 </StackPanel>
-                <StackPanel x:Name="CountdownPanel" Grid.Column="1" VerticalAlignment="Center" Visibility="Collapsed" Margin="24,0,0,0">
+                <StackPanel Grid.Column="1" VerticalAlignment="Center" Margin="24,0,0,0">
+                <StackPanel x:Name="PlayPanel" Visibility="Collapsed" HorizontalAlignment="Right">
+                    <TextBlock x:Name="PlayLabel" Text="Play time left" Foreground="#DCE4EC" HorizontalAlignment="Right"/>
+                    <TextBlock x:Name="PlayLeftText" Text="0:00" FontSize="40" FontWeight="Light" Foreground="White" HorizontalAlignment="Right"/>
+                    <Button x:Name="GraceButton" Content="10 more minutes (once today)" Style="{StaticResource Secondary}" Margin="0,4,0,0" Visibility="Collapsed" Click="OnGrace"/>
+                </StackPanel>
+                <StackPanel x:Name="CountdownPanel" Visibility="Collapsed">
                     <TextBlock Text="Internet comes back in" Foreground="#DCE4EC" HorizontalAlignment="Right"/>
                     <TextBlock x:Name="CountdownText" Text="00:00" FontSize="40" FontWeight="Light" Foreground="White" HorizontalAlignment="Right"/>
                     <Button x:Name="RestoreNowButton" Content="Restore internet now" Style="{StaticResource Secondary}"
                             Margin="0,4,0,0" Click="OnRestoreNow"/>
+                </StackPanel>
                 </StackPanel>
             </Grid>
         </Border>
@@ -44,13 +51,42 @@
                         <Border Background="#E8F3F0" CornerRadius="8" Padding="14,10" Margin="0,0,14,14">
                             <TextBlock TextWrapping="Wrap" Foreground="#24584C">
                                 <Run FontWeight="SemiBold" Text="Switch"/>
-                                <Run Text="starts a real lock with no end time. Stricter profiles are always one click away; looser ones aren't (the calm unlock process comes in milestone 4 – until then only the emergency restore with your recovery code ends a lock)."/>
+                                <Run Text="starts a real lock with no end time. Stricter profiles are always one click away. Looser ones need an unlock request: a reason, a 45-minute wait, then retyping a passage – at most twice a day. Games with a play plan are available during their play time."/>
+                                <LineBreak/>
+                                <Run FontWeight="SemiBold" Text="Commit"/>
+                                <Run Text="promises to stay in a profile (or stricter) until a time you choose – no unlock requests until then. It can be extended, never shortened."/>
                                 <LineBreak/>
                                 <Run FontWeight="SemiBold" Text="Test lock"/>
                                 <Run Text="ends by itself after the time you choose – only possible while you have normal internet."/>
                             </TextBlock>
                         </Border>
+                        <TextBlock x:Name="NoticeText" Visibility="Collapsed" TextWrapping="Wrap" Foreground="#8A4B00" Margin="0,0,14,12"/>
+
+                        <!-- Unlock request in progress -->
+                        <Border x:Name="UnlockPanel" Visibility="Collapsed" Background="#FFF6E5" BorderBrush="#E8C27A" BorderThickness="1"
+                                CornerRadius="10" Padding="18" Margin="0,0,14,14">
+                            <StackPanel>
+                                <TextBlock x:Name="UnlockTitle" FontSize="18" FontWeight="SemiBold" Foreground="{StaticResource Ink}"/>
+                                <TextBlock x:Name="UnlockInfo" TextWrapping="Wrap" Margin="0,4,0,10" Foreground="{StaticResource Ink}"/>
+                                <StackPanel x:Name="ConfirmArea" Visibility="Collapsed">
+                                    <TextBlock Text="Type this text exactly (copying and pasting doesn't work):" Foreground="{StaticResource Muted}" Margin="0,0,0,6"/>
+                                    <Border Background="White" Padding="12" CornerRadius="6" Margin="0,0,0,10">
+                                        <TextBlock x:Name="PassageText" TextWrapping="Wrap" FontFamily="Consolas" FontSize="14" LineHeight="22"/>
+                                    </Border>
+                                    <TextBox x:Name="PassageInput" Height="110" TextWrapping="Wrap" FontFamily="Consolas" FontSize="14" Padding="8"
+                                             AllowDrop="False" ContextMenuService.IsEnabled="False" TextChanged="OnPassageChanged"/>
+                                    <TextBlock x:Name="PassageProgress" Foreground="{StaticResource Muted}" Margin="0,6,0,0"/>
+                                </StackPanel>
+                                <WrapPanel Margin="0,10,0,0">
+                                    <Button x:Name="ConfirmUnlockButton" Content="Confirm unlock" Style="{StaticResource Primary}" Click="OnConfirmUnlock"/>
+                                    <Button Content="Cancel request" Style="{StaticResource Secondary}" Click="OnCancelUnlock"/>
+                                </WrapPanel>
+                            </StackPanel>
+                        </Border>
+
                         <StackPanel Orientation="Horizontal" Margin="0,0,0,14">
+                            <Button x:Name="CommitButton" Content="Commit…" Style="{StaticResource Primary}" Margin="0,0,12,0" Click="OnCommit"/>
+                            <TextBlock x:Name="CommitText" VerticalAlignment="Center" Margin="0,0,24,0" Foreground="{StaticResource Ink}"/>
                             <TextBlock Text="Test length" VerticalAlignment="Center" Margin="0,0,10,0" Foreground="{StaticResource Ink}"/>
                             <ComboBox x:Name="MinutesBox" Width="130" SelectedIndex="0">
                                 <ComboBoxItem Content="3 minutes" Tag="3"/>
@@ -65,6 +101,9 @@
                     </StackPanel>
                 </ScrollViewer>
             </TabItem>
+
+            <!-- ===== Play time ===== -->
+            <TabItem x:Name="PlayTab" Header="Play time"/>
 
             <!-- ===== Programs ===== -->
             <TabItem x:Name="ProgramsTab" Header="Programs"/>

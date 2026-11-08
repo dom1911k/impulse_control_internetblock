@@ -172,4 +172,109 @@ public static class Dialogs
         w.Content = panel;
         return w.ShowDialog() == true ? (string)((ListBoxItem)list.SelectedItem).Tag : null;
     }
+
+    /// <summary>Asks why the user wants to unlock. Returns the reason, or null if cancelled.</summary>
+    public static string? AskUnlockReason(Window owner, string target, int requestsLeft)
+    {
+        const int min = 20;
+        var w = NewWindow(owner, $"Request unlock: {target}", 560);
+        var box = new TextBox { FontSize = 15, Padding = new Thickness(8), Height = 90, TextWrapping = TextWrapping.Wrap, AcceptsReturn = false, Margin = new Thickness(0, 0, 0, 6) };
+        var counter = new TextBlock { Foreground = Brushes.Gray, Margin = new Thickness(0, 0, 0, 16) };
+        var ok = Btn("Start the waiting time", true, w);
+        var cancel = Btn("Never mind", false, w);
+        ok.IsEnabled = false;
+        cancel.IsCancel = true;
+        box.TextChanged += (_, _) =>
+        {
+            var n = box.Text.Trim().Length;
+            counter.Text = n < min ? $"{n} / {min} characters" : "✓";
+            ok.IsEnabled = n >= min;
+        };
+        ok.Click += (_, _) => { w.DialogResult = true; };
+        var buttons = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Right };
+        buttons.Children.Add(ok);
+        buttons.Children.Add(cancel);
+
+        var panel = new StackPanel { Margin = new Thickness(24) };
+        panel.Children.Add(Text($"Unlocking to {target} is a process, on purpose:", 16, FontWeights.SemiBold));
+        panel.Children.Add(Text("1.  Write down why – honestly, for your future self (it shows up in the weekly summary).\n" +
+                                "2.  A waiting time of 45 minutes starts. It can't be shortened.\n" +
+                                "3.  Then you have 10 minutes to confirm by retyping a passage of about 400 characters.\n" +
+                                "4.  If you don't confirm, the request expires. Nothing happens."));
+        panel.Children.Add(Text($"This uses one of your unlock requests for today ({requestsLeft} left), even if you cancel it later."));
+        panel.Children.Add(Text("Why do you want to unlock?", 14, FontWeights.SemiBold));
+        panel.Children.Add(box);
+        panel.Children.Add(counter);
+        panel.Children.Add(buttons);
+        w.Content = panel;
+        w.Loaded += (_, _) => Keyboard.Focus(box);
+        return w.ShowDialog() == true ? box.Text.Trim() : null;
+    }
+
+    /// <summary>Choose a profile (the current one or stricter) and an end time.</summary>
+    public static (string profile, DateTime until)? AskCommitment(Window owner, NetGuard.Core.Ipc.StatusDto status)
+    {
+        var w = NewWindow(owner, "Commit", 560);
+        var profiles = new ComboBox { FontSize = 14, Margin = new Thickness(0, 0, 0, 14), MinWidth = 220, HorizontalAlignment = HorizontalAlignment.Left };
+        foreach (var p in status.Profiles.Where(p => p.Kind != "AllowAll" && (p.IsActive || p.SwitchAllowed)))
+            profiles.Items.Add(p.Name);
+        profiles.SelectedItem = status.Profiles.FirstOrDefault(p => p.IsActive && p.Kind != "AllowAll")?.Name ?? (profiles.Items.Count > 0 ? profiles.Items[0] : null);
+
+        var start = status.CommitmentUntilUtc?.ToLocalTime().DateTime is { } cu && cu > DateTime.Now ? cu : DateTime.Now;
+        var date = new DatePicker { SelectedDate = start.Date, DisplayDateStart = DateTime.Today, DisplayDateEnd = DateTime.Today.AddDays(30), Width = 150, Margin = new Thickness(0, 0, 8, 0) };
+        var time = new ComboBox { Width = 90 };
+        for (var m = 0; m < 24 * 60; m += 15) time.Items.Add($"{m / 60:00}:{m % 60:00}");
+        void Set(DateTime t)
+        {
+            date.SelectedDate = t.Date;
+            var rounded = (int)Math.Ceiling(t.TimeOfDay.TotalMinutes / 15.0) * 15;
+            if (rounded >= 1440) { date.SelectedDate = t.Date.AddDays(1); rounded = 0; }
+            time.SelectedItem = $"{rounded / 60:00}:{rounded % 60:00}";
+        }
+        Set(start.AddHours(2));
+        var when = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 0, 0, 10) };
+        when.Children.Add(date);
+        when.Children.Add(time);
+
+        var presets = new WrapPanel { Margin = new Thickness(0, 0, 0, 16) };
+        void Preset(string label, Func<DateTime> t)
+        {
+            var b = Btn(label, false, w);
+            b.Padding = new Thickness(10, 4, 10, 4);
+            b.FontSize = 12;
+            b.Click += (_, _) => Set(t());
+            presets.Children.Add(b);
+        }
+        Preset("+1 hour", () => DateTime.Now.AddHours(1));
+        Preset("+3 hours", () => DateTime.Now.AddHours(3));
+        Preset("today 23:00", () => DateTime.Today.AddHours(23));
+        Preset("tomorrow 08:00", () => DateTime.Today.AddDays(1).AddHours(8));
+        Preset("tomorrow 18:00", () => DateTime.Today.AddDays(1).AddHours(18));
+        Preset("+1 week", () => DateTime.Now.AddDays(7));
+
+        var ok = Btn("Commit", true, w);
+        var cancel = Btn("Cancel", false, w);
+        cancel.IsCancel = true;
+        ok.Click += (_, _) => { if (profiles.SelectedItem != null && date.SelectedDate != null && time.SelectedItem != null) w.DialogResult = true; };
+        var buttons = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Right };
+        buttons.Children.Add(ok);
+        buttons.Children.Add(cancel);
+
+        var panel = new StackPanel { Margin = new Thickness(24) };
+        panel.Children.Add(Text("A commitment is a promise to your future self: until the time you choose, nothing looser than this profile " +
+                                "is possible – no unlock requests. Stricter is always fine. It can be extended, but never shortened."));
+        if (status.CommitmentUntilUtc is { } c)
+            panel.Children.Add(Text($"Current commitment: {status.CommitmentProfile} until {c.ToLocalTime():dddd HH:mm}. A new one must last at least as long.", 13, FontWeights.SemiBold));
+        panel.Children.Add(Text("Stay in", 14, FontWeights.SemiBold));
+        panel.Children.Add(profiles);
+        panel.Children.Add(Text("until", 14, FontWeights.SemiBold));
+        panel.Children.Add(when);
+        panel.Children.Add(presets);
+        panel.Children.Add(buttons);
+        w.Content = panel;
+        if (w.ShowDialog() != true) return null;
+        var parts = ((string)time.SelectedItem).Split(':');
+        var until = date.SelectedDate!.Value.Date.AddHours(int.Parse(parts[0])).AddMinutes(int.Parse(parts[1]));
+        return ((string)profiles.SelectedItem!, until);
+    }
 }

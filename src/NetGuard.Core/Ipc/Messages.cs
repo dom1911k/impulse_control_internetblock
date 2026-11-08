@@ -32,6 +32,15 @@ public static class IpcCommands
     public const string ProgramRemove = "program-remove";
     public const string ProfileAdd = "profile-add";
     public const string ProfileRemove = "profile-remove";
+    public const string UnlockRequest = "unlock-request";
+    public const string UnlockConfirm = "unlock-confirm";
+    public const string UnlockCancel = "unlock-cancel";
+    public const string Commit = "commit";
+    public const string Grace = "grace";
+    public const string PlanGet = "plan-get";
+    public const string PlanSet = "plan-set";
+    public const string PlanCancel = "plan-cancel";
+    public const string ProgramReapprove = "program-reapprove";
 }
 
 public sealed class IpcRequest
@@ -46,6 +55,10 @@ public sealed class IpcRequest
     public string? Path { get; set; }
     /// <summary>A program entry's name (program editor).</summary>
     public string? Entry { get; set; }
+    /// <summary>Free text: unlock reason, or the retyped passage.</summary>
+    public string? Text { get; set; }
+    public DateTimeOffset? Until { get; set; }
+    public Config.PlayPlan? Plan { get; set; }
 }
 
 public sealed class IpcResponse
@@ -56,6 +69,7 @@ public sealed class IpcResponse
     public StatusDto? Status { get; set; }
     public List<LogEntryDto>? History { get; set; }
     public ConfigDto? Config { get; set; }
+    public List<PlanDto>? Plans { get; set; }
     public ProgramDto? Program { get; set; }
 
     public static IpcResponse Success(string? text = null) => new() { Ok = true, Text = text };
@@ -75,6 +89,15 @@ public sealed class StatusDto
     public bool RecoveryCodeExists { get; set; }
     public DateTimeOffset? RecoveryCodeCreatedUtc { get; set; }
     public bool SelfProtectionActive { get; set; }
+    /// <summary>NetGuard's trusted "now" – countdowns use this, not the PC clock.</summary>
+    public DateTimeOffset ServerNowUtc { get; set; }
+    public string? CommitmentProfile { get; set; }
+    public DateTimeOffset? CommitmentUntilUtc { get; set; }
+    public UnlockDto? Unlock { get; set; }
+    public int UnlocksLeftToday { get; set; }
+    public DateTimeOffset? MaintenanceUntilUtc { get; set; }
+    public bool MaintenanceReminder { get; set; }
+    public List<string> RejectedFiles { get; set; } = new();
     public List<ProfileDto> Profiles { get; set; } = new();
 }
 
@@ -89,6 +112,9 @@ public sealed class ProfileDto
     public string SwitchHint { get; set; } = "";
     public bool TestAllowed { get; set; }
     public string TestHint { get; set; } = "";
+    public bool UnlockAllowed { get; set; }
+    public string UnlockHint { get; set; } = "";
+    public PlayDto? Play { get; set; }
 }
 
 public sealed class LogEntryDto
@@ -147,4 +173,40 @@ public sealed class FileDto
     public string Path { get; set; } = "";
     public bool Allowed { get; set; }
     public string Detail { get; set; } = "";
+}
+
+public sealed class UnlockDto
+{
+    public string TargetProfile { get; set; } = "";
+    public string Reason { get; set; } = "";
+    public DateTimeOffset RequestedUtc { get; set; }
+    public DateTimeOffset ReadyUtc { get; set; }
+    public DateTimeOffset ExpiresUtc { get; set; }
+    /// <summary>Only sent once the waiting time is over.</summary>
+    public string? Passage { get; set; }
+}
+
+public sealed class PlayDto
+{
+    public bool Allowed { get; set; }
+    public DateTimeOffset? EndsUtc { get; set; }
+    public DateTimeOffset? NextStartUtc { get; set; }
+    public int UsedTodayMinutes { get; set; }
+    public int? DailyLimitMinutes { get; set; }
+    public int UsedWeekMinutes { get; set; }
+    public int? WeeklyLimitMinutes { get; set; }
+    public bool GraceAvailable { get; set; }
+    public bool GraceActive { get; set; }
+    public string Reason { get; set; } = "";
+}
+
+public sealed class PlanDto
+{
+    public string Profile { get; set; } = "";
+    public Config.PlayPlan? Plan { get; set; }
+    public List<string> Programs { get; set; } = new();
+    public Config.PlayPlan? PendingPlan { get; set; }
+    public bool HasPending { get; set; }
+    public DateTimeOffset? PendingEffectiveUtc { get; set; }
+    public List<string> FallbackChoices { get; set; } = new();
 }

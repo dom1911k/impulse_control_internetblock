@@ -3,9 +3,9 @@
 A self-control internet lock for a Windows gaming PC. It blocks all internet except the programs
 the active profile allows. Daily use is simple, and undoing it in a weak moment is deliberately hard.
 
-> **Status: milestone 3 of 5 – tray icon, setup wizard, program editor** (on top of the protection service,
-> self-healing, self-protection and recovery code). No cooldown unlock or play-time plan yet.
-> Test steps: [docs/TESTING-M3.md](docs/TESTING-M3.md).
+> **Status: milestone 4 of 5 – unlock requests, commitments, play-time plans** (on top of the tray app,
+> setup wizard, program editor, protection service, self-healing, self-protection and recovery code).
+> Test steps: [docs/TESTING-M4.md](docs/TESTING-M4.md).
 > Emergency: [docs/RECOVERY.md](docs/RECOVERY.md).
 >
 > **Download:** [NetGuardSetup.exe](https://github.com/dom1911k/impulse_control_internetblock/releases/latest/download/NetGuardSetup.exe)
@@ -58,6 +58,13 @@ Rocksmith works in Steam Offline Mode.
   5 wrong attempts per hour. Needed to end a lock early or uninstall during a lock; can only be
   replaced with normal internet. Known remaining bypass (documented in `docs/LOST-CODE.md`):
   taking ownership of the service's registry key and folders by hand.
+* **Time-based rules** (`NetGuard.Core/Rules/LockRules.cs`, pure and unit-tested): unlock requests
+  (reason ≥ 20 chars → 45 min cooldown → 10 min to retype a random ~400-character passage, max 2/day,
+  Maintenance auto-returns after 45 min), commitments (no looser than X until T; extend only),
+  play-time plans (weekly windows, daily/weekly limits counted while the profile is active, fallback
+  profile outside play time, game programs blocked in every profile outside play time, one 10-minute
+  grace per day taken from the next day, looser plan changes after 72 h). All of it runs on a
+  trusted clock that ignores changes to the Windows clock.
 * **Everything is logged** as JSON lines in `C:\ProgramData\NetGuard\log.jsonl`. That folder is
   writable only by SYSTEM and Administrators; standard users can read the log.
 
@@ -86,11 +93,8 @@ docs/                    TESTING-M1.md, RECOVERY.md
 .github/workflows/       Windows build: tests, both exes, installer, GitHub Release
 ```
 
-Coming next: milestone 4 – cooldown unlock, commitments, rate limit, and the **play-time plan**
-(weekly timetable per game profile, daily/weekly limits counted while the game profile is active,
-Offline outside play time, warnings + automatic switch with one 10-minute grace per day, looser
-plan changes take effect after 72 hours). Milestone 5 – recovery shortcut, weekly summary incl.
-play-time statistics, installer polish.
+Coming next: milestone 5 – recovery shortcut, weekly summary of unlock reasons and play time,
+installer polish.
 
 ## Updating
 
