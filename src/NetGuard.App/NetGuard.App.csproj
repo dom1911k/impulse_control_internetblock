@@ -4,6 +4,8 @@
     <OutputType>WinExe</OutputType>
     <TargetFramework>net8.0-windows10.0.17763.0</TargetFramework>
     <UseWPF>true</UseWPF>
+    <!-- for the tray icon (NotifyIcon) only -->
+    <UseWindowsForms>true</UseWindowsForms>
     <AssemblyName>NetGuard</AssemblyName>
     <RootNamespace>NetGuard.App</RootNamespace>
     <ApplicationIcon>Assets\netguard.ico</ApplicationIcon>
@@ -16,6 +18,11 @@
   </PropertyGroup>
   <ItemGroup>
     <Resource Include="Assets\netguard.ico" />
+  </ItemGroup>
+  <ItemGroup>
+    <!-- WPF and WinForms share type names; WinForms/Drawing types are always written out in full. -->
+    <Using Remove="System.Windows.Forms" />
+    <Using Remove="System.Drawing" />
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="..\NetGuard.Core\NetGuard.Core.csproj" />

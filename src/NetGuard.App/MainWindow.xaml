@@ -61,10 +61,13 @@
                         </StackPanel>
                         <UniformGrid x:Name="ProfileCards" Columns="3"/>
                         <TextBlock x:Name="NoConfigHint" Style="{StaticResource Body}" Visibility="Collapsed"
-                                   Text="NetGuard isn't set up yet. Open the Setup tab first."/>
+                                   Text="NetGuard isn't set up yet. Setup → Run setup wizard."/>
                     </StackPanel>
                 </ScrollViewer>
             </TabItem>
+
+            <!-- ===== Programs ===== -->
+            <TabItem x:Name="ProgramsTab" Header="Programs"/>
 
             <!-- ===== Setup ===== -->
             <TabItem Header="Setup">
@@ -72,36 +75,17 @@
                     <StackPanel Margin="4,14,0,0">
                         <Border Style="{StaticResource Card}">
                             <StackPanel>
-                                <TextBlock Style="{StaticResource H2}" Text="1 · Find your apps"/>
-                                <TextBlock Style="{StaticResource Body}" Text="NetGuard looks for World of Warcraft, Battle.net, the Blizzard Agent, Spotify and Steam on this PC."/>
-                                <StackPanel Orientation="Horizontal">
-                                    <Button Content="Find apps" Style="{StaticResource Primary}" Click="OnDetect"/>
-                                </StackPanel>
+                                <TextBlock Style="{StaticResource H2}" Text="Setup wizard"/>
+                                <TextBlock Style="{StaticResource Body}" Text="Finds your apps, checks which programs each profile allows, creates your recovery code, and runs a one-minute recovery test."/>
+                                <Button Content="Run setup wizard" Style="{StaticResource Primary}" HorizontalAlignment="Left" Click="OnRunWizard"/>
                             </StackPanel>
                         </Border>
                         <Border Style="{StaticResource Card}">
                             <StackPanel>
-                                <TextBlock Style="{StaticResource H2}" Text="2 · Save the configuration"/>
-                                <TextBlock x:Name="ConfigStateText" Style="{StaticResource Body}" Text=""/>
-                                <StackPanel Orientation="Horizontal">
-                                    <Button x:Name="CreateConfigButton" Content="Create configuration" Style="{StaticResource Primary}" Click="OnInit"/>
-                                    <Button Content="Open NetGuard data folder" Style="{StaticResource Secondary}" Click="OnOpenDataFolder"/>
-                                </StackPanel>
-                            </StackPanel>
-                        </Border>
-                        <Border Style="{StaticResource Card}">
-                            <StackPanel>
-                                <TextBlock Style="{StaticResource H2}" Text="3 · Recovery code"/>
+                                <TextBlock Style="{StaticResource H2}" Text="Recovery code"/>
                                 <TextBlock Style="{StaticResource Body}" Text="Your emergency key. It's the only way to end a lock early (until the unlock process in milestone 4) and to uninstall NetGuard during a lock. It's shown exactly once: write it on paper and put it somewhere inconvenient – or give it to someone you trust. Don't keep it on this PC."/>
                                 <TextBlock x:Name="RecoveryStateText" Style="{StaticResource Body}" FontWeight="SemiBold" Text=""/>
                                 <Button x:Name="RecoveryButton" Content="Create recovery code" Style="{StaticResource Primary}" HorizontalAlignment="Left" Click="OnCreateRecoveryCode"/>
-                            </StackPanel>
-                        </Border>
-                        <Border Style="{StaticResource Card}">
-                            <StackPanel>
-                                <TextBlock Style="{StaticResource H2}" Text="4 · Check the allowed files"/>
-                                <TextBlock Style="{StaticResource Body}" Text="Shows exactly which files each profile lets online. Every Blizzard and Spotify file must say 'signed by …'. Anything marked REJECTED will stay offline."/>
-                                <Button Content="Show allowed files" Style="{StaticResource Secondary}" HorizontalAlignment="Left" Click="OnPrograms"/>
                             </StackPanel>
                         </Border>
                     </StackPanel>
@@ -109,7 +93,7 @@
             </TabItem>
 
             <!-- ===== History ===== -->
-            <TabItem Header="History">
+            <TabItem x:Name="HistoryTab" Header="History">
                 <DockPanel Margin="4,14,0,0">
                     <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Margin="0,0,0,10">
                         <Button Content="Refresh" Style="{StaticResource Secondary}" Click="OnRefreshHistory"/>

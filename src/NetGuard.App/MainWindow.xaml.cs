@@ -20,76 +20,85 @@ public sealed record LogRow(string When, string What, string Details);
 public partial class MainWindow : Window
 {
     private readonly GuardClient _client = new();
+    private readonly StatusMonitor _monitor;
     private readonly DispatcherTimer _timer = new() { Interval = TimeSpan.FromSeconds(1) };
     private StatusDto? _status;
     private bool _serviceDown;
     private string _serviceProblem = "";
     private bool _busy;
-    private bool _refreshing;
-    private int _tick;
+    private bool _allowClose;
     private ReleaseInfo? _latest;
     private string _cardsSignature = "";
 
-    public MainWindow()
+    public MainWindow(StatusMonitor monitor)
     {
+        _monitor = monitor;
         InitializeComponent();
         VersionText.Text = $"Installed version: {GitHubReleases.CurrentVersion}";
         _timer.Tick += OnTick;
         Loaded += OnLoaded;
+        _monitor.Changed += OnStatusChanged;
+        Programs = new ProgramsPanel(this, _client);
+        ProgramsTab.Content = Programs;
+        Tabs.SelectionChanged += async (_, e) =>
+        {
+            if (e.Source == Tabs && Tabs.SelectedItem == ProgramsTab) await Programs.RefreshAsync();
+            if (e.Source == Tabs && Tabs.SelectedItem == HistoryTab) await LoadHistoryAsync();
+        };
+        Closing += (_, e) =>
+        {
+            if (_allowClose) return;
+            e.Cancel = true; // closing the window keeps NetGuard in the tray
+            Hide();
+        };
+    }
+
+    public ProgramsPanel Programs { get; }
+
+    public void AllowClose() { _allowClose = true; Close(); }
+
+    public void OpenWizard()
+    {
+        if (!IsVisible) Show();
+        var w = new WizardWindow(this, _client, _monitor);
+        w.ShowDialog();
+        _ = _monitor.RefreshAsync();
+    }
+
+    private void OnRunWizard(object sender, RoutedEventArgs e) => OpenWizard();
+
+    private void OnStatusChanged()
+    {
+        _status = _monitor.Status;
+        _serviceDown = _monitor.ServiceDown;
+        _serviceProblem = _monitor.Problem;
+        ApplyStatus();
     }
 
     // ================================================================ lifecycle / status
 
     private async void OnLoaded(object sender, RoutedEventArgs e)
     {
-        await RefreshStatusAsync();
+        OnStatusChanged();
         await LoadHistoryAsync();
         _timer.Start();
         Output.Text = _serviceDown
             ? "The NetGuard protection service isn't running.\n\nInstall or repair NetGuard with NetGuardSetup.exe, or Tools → Start protection service."
             : _status?.ConfigExists == false || _status?.RecoveryCodeExists == false
-                ? "Welcome to NetGuard.\n\nFirst time here? Open the Setup tab: Find apps → Create configuration → Create recovery code."
+                ? "Welcome to NetGuard.\n\nFirst time here? Setup → Run setup wizard."
                 : "Welcome to NetGuard.\n\nSwitch to a profile, start a test lock, or use Preview to see exactly what would change.";
     }
 
-    private async void OnTick(object? sender, EventArgs e)
+    private void OnTick(object? sender, EventArgs e)
     {
         if (_status?.TestDeadlineUtc is { } deadline)
         {
             var left = deadline - DateTimeOffset.UtcNow;
             CountdownText.Text = left > TimeSpan.Zero ? left.ToString(@"mm\:ss") : "00:00";
         }
-        if (++_tick % 3 == 0 && !_busy) await RefreshStatusAsync();
     }
 
-    private async Task RefreshStatusAsync()
-    {
-        if (_refreshing) return;
-        _refreshing = true;
-        try
-        {
-            var r = await _client.SendAsync(new IpcRequest { Command = IpcCommands.Status }, TimeSpan.FromSeconds(10));
-            _status = r.Status;
-            _serviceDown = false;
-        }
-        catch (GuardClient.ServiceUnavailableException ex)
-        {
-            _status = null;
-            _serviceDown = true;
-            _serviceProblem = ex.Message;
-        }
-        catch (Exception ex)
-        {
-            _status = null;
-            _serviceDown = true;
-            _serviceProblem = "Could not ask the service: " + ex.Message;
-        }
-        finally
-        {
-            _refreshing = false;
-        }
-        ApplyStatus();
-    }
+    private Task RefreshStatusAsync() => _monitor.RefreshAsync();
 
     private void ApplyStatus()
     {
@@ -127,6 +136,7 @@ public partial class MainWindow : Window
                 ? "NetGuard isn't fully set up yet – see the Setup tab."
                 : "No profile is active.";
             Banner.Background = Brush("#2E3A46");
+            ProfileCards.Opacity = 1;
         }
         else
         {
@@ -134,7 +144,7 @@ public partial class MainWindow : Window
             StatusDetail.Text = _status.TestDeadlineUtc is { } d
                 ? $"Test lock – normal internet comes back by itself at {d.ToLocalTime():T}."
                 : $"Active since {_status.ActiveSinceUtc?.ToLocalTime():g}. NetGuard keeps it in place and repairs any change.";
-            Banner.Background = Brush(BannerColor(profile));
+            Banner.Background = Brush(Theme.ProfileColor(profile));
         }
         CountdownPanel.Visibility = _status.TestDeadlineUtc != null ? Visibility.Visible : Visibility.Collapsed;
         BuildProfileCards(_status);
@@ -144,14 +154,6 @@ public partial class MainWindow : Window
     {
         try { return ServiceControl.Describe(); } catch { return "unknown"; }
     }
-
-    private static string BannerColor(string profile) => profile.ToLowerInvariant() switch
-    {
-        "offline" => "#3D4B5C",
-        "wow" => "#1F4E79",
-        "maintenance" => "#8A5A12",
-        _ => "#2E7D6B",
-    };
 
     private static SolidColorBrush Brush(string hex) => new((Color)ColorConverter.ConvertFromString(hex));
 
@@ -168,15 +170,11 @@ public partial class MainWindow : Window
         ProfileCards.Children.Clear();
         if (status == null) { NoConfigHint.Visibility = Visibility.Collapsed; return; }
         NoConfigHint.Visibility = status.ConfigExists ? Visibility.Collapsed : Visibility.Visible;
-        ConfigStateText.Text = status.ConfigExists
-            ? "A configuration exists. Re-creating it runs the app search again and overwrites it."
-            : "No configuration yet. This saves the apps found in step 1 and protects NetGuard's folder so only administrators can change it.";
-        CreateConfigButton.Content = status.ConfigExists ? "Re-create configuration…" : "Create configuration";
 
         foreach (var p in status.Profiles)
         {
             var stack = new StackPanel();
-            stack.Children.Add(new Border { Height = 5, CornerRadius = new CornerRadius(3), Background = Brush(BannerColor(p.Name)), Margin = new Thickness(0, 0, 0, 12) });
+            stack.Children.Add(new Border { Height = 5, CornerRadius = new CornerRadius(3), Background = Brush(Theme.ProfileColor(p.Name)), Margin = new Thickness(0, 0, 0, 12) });
 
             var titleRow = new DockPanel();
             if (p.IsActive)
@@ -184,7 +182,7 @@ public partial class MainWindow : Window
                 var badge = new TextBlock
                 {
                     Text = "ACTIVE", FontSize = 11, FontWeight = FontWeights.Bold, Foreground = Brushes.White,
-                    Background = Brush(BannerColor(p.Name)), Padding = new Thickness(6, 2, 6, 2), VerticalAlignment = VerticalAlignment.Center,
+                    Background = Brush(Theme.ProfileColor(p.Name)), Padding = new Thickness(6, 2, 6, 2), VerticalAlignment = VerticalAlignment.Center,
                 };
                 DockPanel.SetDock(badge, Dock.Right);
                 titleRow.Children.Add(badge);
@@ -289,28 +287,6 @@ public partial class MainWindow : Window
         await RunAsync("Ending the test lock", new IpcRequest { Command = IpcCommands.TestEnd });
 
     // ---------- setup
-
-    private async void OnDetect(object sender, RoutedEventArgs e) =>
-        await RunAsync("Find apps", new IpcRequest { Command = IpcCommands.Detect });
-
-    private async void OnInit(object sender, RoutedEventArgs e)
-    {
-        if (_status?.ConfigExists == true &&
-            MessageBox.Show(this, "Search for apps again and overwrite the current configuration?", "NetGuard",
-                MessageBoxButton.OKCancel, MessageBoxImage.Question) != MessageBoxResult.OK)
-            return;
-        await RunAsync("Create configuration", new IpcRequest { Command = IpcCommands.Init });
-    }
-
-    private void OnOpenDataFolder(object sender, RoutedEventArgs e)
-    {
-        var dir = new NetGuard.Core.NetGuardPaths().DataDir;
-        if (!System.IO.Directory.Exists(dir)) { Output.Text = "The data folder doesn't exist yet."; return; }
-        Process.Start(new ProcessStartInfo("explorer.exe", $"\"{dir}\"") { UseShellExecute = true });
-    }
-
-    private async void OnPrograms(object sender, RoutedEventArgs e) =>
-        await RunAsync("Allowed files per profile", new IpcRequest { Command = IpcCommands.Programs });
 
     // ---------- history
 

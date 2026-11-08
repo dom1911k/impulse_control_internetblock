@@ -22,6 +22,7 @@ public static class LogTypes
     public const string RecoveryCodeWrong = "recovery-code-wrong";
     public const string ProtectionRelaxed = "protection-relaxed";
     public const string UpdateStarted = "update-started";
+    public const string ConfigChanged = "config-changed";
 }
 
 /// <summary>Append-only JSON-lines log (one JSON object per line).</summary>

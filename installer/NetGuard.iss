@@ -40,6 +40,10 @@ Name: "{autoprograms}\NetGuard"; Filename: "{app}\NetGuard.exe"
 Name: "{autoprograms}\NetGuard Recovery (manual steps)"; Filename: "{app}\RECOVERY.md"
 Name: "{autodesktop}\NetGuard"; Filename: "{app}\NetGuard.exe"; Tasks: desktopicon
 
+[Registry]
+; NetGuard's tray icon starts with Windows for every user.
+Root: HKLM; Subkey: "Software\Microsoft\Windows\CurrentVersion\Run"; ValueType: string; ValueName: "NetGuard"; ValueData: """{app}\NetGuard.exe"" --tray"; Flags: uninsdeletevalue
+
 [Run]
 ; The protection service: LocalSystem, automatic start, restarts itself if it crashes.
 Filename: "{sys}\sc.exe"; Parameters: "create NetGuard binPath= ""\""{app}\NetGuard.Service.exe\"""" start= auto DisplayName= NetGuard"; Flags: runhidden waituntilterminated; StatusMsg: "Installing the NetGuard service..."

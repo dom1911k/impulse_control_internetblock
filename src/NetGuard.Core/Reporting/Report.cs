@@ -79,6 +79,7 @@ public static class Report
         LogTypes.RecoveryCodeWrong => "Wrong recovery code",
         LogTypes.ProtectionRelaxed => "Protection switched off for uninstall",
         LogTypes.UpdateStarted => "Update started",
+        LogTypes.ConfigChanged => "Programs changed",
         LogTypes.ProfileApplied => "Profile applied",
         LogTypes.ApplyError => "Problem while applying",
         LogTypes.Recovery => "Normal internet restored",
@@ -95,7 +96,7 @@ public static class Report
     {
         if (entry["data"] is not JsonObject d) return "";
         var parts = new List<string>();
-        foreach (var key in new[] { "profile", "reason", "request", "minutes", "path", "from", "to", "endedEarly" })
+        foreach (var key in new[] { "change", "profile", "program", "reason", "request", "minutes", "path", "from", "to", "endedEarly" })
             if (d[key] is { } v) parts.Add($"{key}: {v.ToJsonString().Trim('"')}");
         if (d["changes"] is JsonArray c)
             parts.Add((string?)entry["type"] == LogTypes.Tamper && c.Count > 0

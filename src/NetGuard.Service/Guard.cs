@@ -2,6 +2,8 @@ using System.Runtime.Versioning;
 using System.Text;
 using NetGuard.Core;
 using NetGuard.Core.Config;
+using NetGuard.Core.Editing;
+using NetGuard.Core.Paths;
 using NetGuard.Core.Hosts;
 using NetGuard.Core.Ipc;
 using NetGuard.Core.Logging;
@@ -26,6 +28,7 @@ public sealed class Guard
     private readonly Engine _engine;
     private readonly ILogger<Guard> _logger;
     private readonly object _gate = new();
+    private readonly AuthenticodeVerifier _verifier = new();
 
     public DateTimeOffset? LastCheckUtc { get; private set; }
 
@@ -35,7 +38,7 @@ public sealed class Guard
     {
         _logger = logger;
         _lifetime = lifetime;
-        _engine = new Engine(new ComFirewall(), new AuthenticodeVerifier(), new NetGuardPaths(), HostsFile.DefaultPath);
+        _engine = new Engine(new ComFirewall(), _verifier, new NetGuardPaths(), HostsFile.DefaultPath);
     }
 
     public Engine Engine => _engine;
@@ -189,6 +192,10 @@ public sealed class Guard
                     IpcCommands.Blocked => Blocked(),
                     IpcCommands.Update => Update(caller),
                     IpcCommands.PrepareUninstall => PrepareUninstall(req, caller),
+                    IpcCommands.ConfigGet => new IpcResponse { Ok = true, Config = BuildConfigDto() },
+                    IpcCommands.InspectFile => InspectFile(req),
+                    IpcCommands.ProgramAdd or IpcCommands.ProgramRemove or IpcCommands.ProfileAdd or IpcCommands.ProfileRemove
+                        => EditConfig(req, caller),
                     _ => IpcResponse.Fail($"Unknown request '{req.Command}'."),
                 };
             }
@@ -449,5 +456,120 @@ public sealed class Guard
         // Stop ourselves shortly after answering.
         _ = Task.Run(async () => { await Task.Delay(1500); _lifetime.StopApplication(); });
         return IpcResponse.Success("Normal internet is back and NetGuard's protection is off. The uninstaller starts now.");
+    }
+
+    // ================================================================ program editor
+
+    private ConfigDto BuildConfigDto()
+    {
+        var cfg = RequireConfig();
+        var state = _engine.LoadState();
+        var resolver = new ProgramResolver(_verifier);
+        var loosen = ProfilePolicy.CanLoosenConfig(cfg, state.ActiveProfile);
+
+        ProgramDto ToDto(ProgramEntry e, bool blockList)
+        {
+            var files = resolver.Resolve(e, checkPins: !blockList);
+            return new ProgramDto
+            {
+                Name = e.Name,
+                Paths = e.Paths.ToList(),
+                Pin = e.Pin.ToString(),
+                Signer = e.Signer,
+                PinDescription = blockList ? "blocked wherever it is"
+                    : e.Pin switch
+                    {
+                        PinMode.Signature => $"only if signed by {e.Signer}",
+                        PinMode.Sha256 => "only this exact version (re-add it after the program updates)",
+                        _ => "any file at this location",
+                    },
+                Files = files.Select(f => new FileDto { Path = f.Path, Allowed = f.Status == ResolvedStatus.Allowed, Detail = f.Detail }).ToList(),
+            };
+        }
+
+        return new ConfigDto
+        {
+            CanLoosen = loosen.Allowed,
+            LoosenHint = loosen.Reason,
+            Profiles = cfg.Profiles.Select(p => new ProfileConfigDto
+            {
+                Name = p.Name,
+                Kind = p.Kind.ToString(),
+                IsActive = string.Equals(p.Name, state.ActiveProfile, StringComparison.OrdinalIgnoreCase),
+                Programs = p.Programs.Select(e => ToDto(e, false)).ToList(),
+            }).ToList(),
+            AlwaysBlocked = new ProfileConfigDto
+            {
+                Name = ConfigEditor.AlwaysBlockedList,
+                Kind = "Block",
+                Programs = cfg.AlwaysBlocked.Select(e => ToDto(e, true)).ToList(),
+            },
+        };
+    }
+
+    private ProgramEntry SuggestEntry(string path)
+    {
+        if (!File.Exists(path)) throw new InvalidOperationException($"File not found: {path}");
+        if (!path.EndsWith(".exe", StringComparison.OrdinalIgnoreCase)) throw new InvalidOperationException("Please pick a program (.exe).");
+        string? description = null;
+        try { description = System.Diagnostics.FileVersionInfo.GetVersionInfo(path).FileDescription; } catch { }
+        return ConfigEditor.Suggest(Path.GetFullPath(path), description, _verifier.Check(path), ProgramResolver.Sha256Of);
+    }
+
+    private IpcResponse InspectFile(IpcRequest req)
+    {
+        var e = SuggestEntry(req.Path ?? throw new ArgumentException("Which file?"));
+        return new IpcResponse
+        {
+            Ok = true,
+            Program = new ProgramDto
+            {
+                Name = e.Name, Paths = e.Paths, Pin = e.Pin.ToString(), Signer = e.Signer,
+                PinDescription = e.Pin == PinMode.Signature
+                    ? $"Signed by {e.Signer}. It stays allowed after updates, and a renamed other program can't pretend to be it."
+                    : "Not digitally signed. NetGuard pins this exact version: after an update you'll need to add it again (with normal internet or in Maintenance).",
+            },
+        };
+    }
+
+    private IpcResponse EditConfig(IpcRequest req, CallerInfo caller)
+    {
+        var cfg = RequireConfig();
+        var state = _engine.LoadState();
+        var list = req.Profile ?? throw new ArgumentException("Which profile?");
+
+        if (ConfigEditor.IsLoosening(req.Command, list))
+        {
+            var d = ProfilePolicy.CanLoosenConfig(cfg, state.ActiveProfile);
+            if (!d.Allowed) return Refuse(caller, req, d.Reason);
+        }
+
+        string change;
+        switch (req.Command)
+        {
+            case IpcCommands.ProgramAdd:
+                var entry = SuggestEntry(req.Path ?? throw new ArgumentException("Which file?"));
+                ConfigEditor.AddProgram(cfg, list, entry);
+                change = $"added {entry.Name} to {list}";
+                break;
+            case IpcCommands.ProgramRemove:
+                ConfigEditor.RemoveProgram(cfg, list, req.Entry ?? throw new ArgumentException("Which program?"));
+                change = $"removed {req.Entry} from {list}";
+                break;
+            case IpcCommands.ProfileAdd:
+                ConfigEditor.AddProfile(cfg, list);
+                change = $"new profile {list}";
+                break;
+            default:
+                ConfigEditor.RemoveProfile(cfg, list, state.ActiveProfile);
+                change = $"deleted profile {list}";
+                break;
+        }
+        cfg.Save(_engine.Paths.ConfigFile);
+        _engine.Log.Append(LogTypes.ConfigChanged, new { change, path = req.Path }, caller.Name);
+
+        // A lock is active: apply the change right away (e.g. a removed program goes offline now).
+        if (state.ActiveProfile != null) _engine.Heal(cfg, caller.Name);
+        return IpcResponse.Success(char.ToUpper(change[0]) + change[1..] + ".");
     }
 }

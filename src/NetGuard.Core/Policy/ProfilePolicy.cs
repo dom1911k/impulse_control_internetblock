@@ -39,4 +39,13 @@ public static class ProfilePolicy
         activeProfile == null
             ? new(true, "no lock active")
             : new(false, "Test locks end by themselves, so they're only possible with normal internet.");
+
+    /// <summary>Letting more online (adding programs) only with normal internet or in Maintenance.</summary>
+    public static SwitchDecision CanLoosenConfig(NetGuardConfig cfg, string? activeProfile)
+    {
+        if (activeProfile == null) return new(true, "no lock active");
+        var p = cfg.FindProfile(activeProfile);
+        if (p is { Kind: ProfileKind.AllowAll }) return new(true, "Maintenance");
+        return new(false, "Adding programs is only possible with normal internet or in Maintenance. Removing is always possible.");
+    }
 }

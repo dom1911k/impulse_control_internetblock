@@ -26,6 +26,12 @@ public static class IpcCommands
     public const string RecoveryCreate = "recovery-create";
     public const string Update = "update";
     public const string PrepareUninstall = "prepare-uninstall";
+    public const string ConfigGet = "config-get";
+    public const string InspectFile = "inspect-file";
+    public const string ProgramAdd = "program-add";
+    public const string ProgramRemove = "program-remove";
+    public const string ProfileAdd = "profile-add";
+    public const string ProfileRemove = "profile-remove";
 }
 
 public sealed class IpcRequest
@@ -36,6 +42,10 @@ public sealed class IpcRequest
     public bool? On { get; set; }
     /// <summary>Recovery code, for requests that need it.</summary>
     public string? Code { get; set; }
+    /// <summary>A file path (program editor).</summary>
+    public string? Path { get; set; }
+    /// <summary>A program entry's name (program editor).</summary>
+    public string? Entry { get; set; }
 }
 
 public sealed class IpcResponse
@@ -45,6 +55,8 @@ public sealed class IpcResponse
     public string? Text { get; set; }
     public StatusDto? Status { get; set; }
     public List<LogEntryDto>? History { get; set; }
+    public ConfigDto? Config { get; set; }
+    public ProgramDto? Program { get; set; }
 
     public static IpcResponse Success(string? text = null) => new() { Ok = true, Text = text };
     public static IpcResponse Fail(string error) => new() { Ok = false, Error = error };
@@ -101,4 +113,38 @@ public static class IpcJson
 
     public static string Serialize<T>(T value) => JsonSerializer.Serialize(value, Options);
     public static T? Deserialize<T>(string line) => JsonSerializer.Deserialize<T>(line, Options);
+}
+
+public sealed class ConfigDto
+{
+    /// <summary>Adding programs (loosening) is possible right now.</summary>
+    public bool CanLoosen { get; set; }
+    public string LoosenHint { get; set; } = "";
+    public List<ProfileConfigDto> Profiles { get; set; } = new();
+    public ProfileConfigDto AlwaysBlocked { get; set; } = new();
+}
+
+public sealed class ProfileConfigDto
+{
+    public string Name { get; set; } = "";
+    public string Kind { get; set; } = "";
+    public bool IsActive { get; set; }
+    public List<ProgramDto> Programs { get; set; } = new();
+}
+
+public sealed class ProgramDto
+{
+    public string Name { get; set; } = "";
+    public List<string> Paths { get; set; } = new();
+    public string Pin { get; set; } = "";
+    public string? Signer { get; set; }
+    public string PinDescription { get; set; } = "";
+    public List<FileDto> Files { get; set; } = new();
+}
+
+public sealed class FileDto
+{
+    public string Path { get; set; } = "";
+    public bool Allowed { get; set; }
+    public string Detail { get; set; } = "";
 }
