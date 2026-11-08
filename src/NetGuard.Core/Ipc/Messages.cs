@@ -23,6 +23,9 @@ public static class IpcCommands
     public const string Init = "init";
     public const string Audit = "audit";
     public const string Blocked = "blocked";
+    public const string RecoveryCreate = "recovery-create";
+    public const string Update = "update";
+    public const string PrepareUninstall = "prepare-uninstall";
 }
 
 public sealed class IpcRequest
@@ -31,6 +34,8 @@ public sealed class IpcRequest
     public string? Profile { get; set; }
     public int? Minutes { get; set; }
     public bool? On { get; set; }
+    /// <summary>Recovery code, for requests that need it.</summary>
+    public string? Code { get; set; }
 }
 
 public sealed class IpcResponse
@@ -55,7 +60,9 @@ public sealed class StatusDto
     public DateTimeOffset? LastCheckUtc { get; set; }
     public DateTimeOffset? LastTamperUtc { get; set; }
     public string CallerName { get; set; } = "";
-    public bool CallerIsAdmin { get; set; }
+    public bool RecoveryCodeExists { get; set; }
+    public DateTimeOffset? RecoveryCodeCreatedUtc { get; set; }
+    public bool SelfProtectionActive { get; set; }
     public List<ProfileDto> Profiles { get; set; } = new();
 }
 

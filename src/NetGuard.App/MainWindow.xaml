@@ -44,7 +44,7 @@
                         <Border Background="#E8F3F0" CornerRadius="8" Padding="14,10" Margin="0,0,14,14">
                             <TextBlock TextWrapping="Wrap" Foreground="#24584C">
                                 <Run FontWeight="SemiBold" Text="Switch"/>
-                                <Run Text="starts a real lock with no end time. Stricter profiles are always one click away; looser ones need an administrator (the calm unlock process comes in milestone 4)."/>
+                                <Run Text="starts a real lock with no end time. Stricter profiles are always one click away; looser ones aren't (the calm unlock process comes in milestone 4 – until then only the emergency restore with your recovery code ends a lock)."/>
                                 <LineBreak/>
                                 <Run FontWeight="SemiBold" Text="Test lock"/>
                                 <Run Text="ends by itself after the time you choose – only possible while you have normal internet."/>
@@ -61,7 +61,7 @@
                         </StackPanel>
                         <UniformGrid x:Name="ProfileCards" Columns="3"/>
                         <TextBlock x:Name="NoConfigHint" Style="{StaticResource Body}" Visibility="Collapsed"
-                                   Text="NetGuard isn't set up yet. An administrator needs to open the Setup tab first."/>
+                                   Text="NetGuard isn't set up yet. Open the Setup tab first."/>
                     </StackPanel>
                 </ScrollViewer>
             </TabItem>
@@ -73,7 +73,7 @@
                         <Border Style="{StaticResource Card}">
                             <StackPanel>
                                 <TextBlock Style="{StaticResource H2}" Text="1 · Find your apps"/>
-                                <TextBlock Style="{StaticResource Body}" Text="NetGuard looks for World of Warcraft, Battle.net, the Blizzard Agent, Spotify and Steam on this PC. Setup needs an administrator (Tools → Restart as administrator)."/>
+                                <TextBlock Style="{StaticResource Body}" Text="NetGuard looks for World of Warcraft, Battle.net, the Blizzard Agent, Spotify and Steam on this PC."/>
                                 <StackPanel Orientation="Horizontal">
                                     <Button Content="Find apps" Style="{StaticResource Primary}" Click="OnDetect"/>
                                 </StackPanel>
@@ -91,7 +91,15 @@
                         </Border>
                         <Border Style="{StaticResource Card}">
                             <StackPanel>
-                                <TextBlock Style="{StaticResource H2}" Text="3 · Check the allowed files"/>
+                                <TextBlock Style="{StaticResource H2}" Text="3 · Recovery code"/>
+                                <TextBlock Style="{StaticResource Body}" Text="Your emergency key. It's the only way to end a lock early (until the unlock process in milestone 4) and to uninstall NetGuard during a lock. It's shown exactly once: write it on paper and put it somewhere inconvenient – or give it to someone you trust. Don't keep it on this PC."/>
+                                <TextBlock x:Name="RecoveryStateText" Style="{StaticResource Body}" FontWeight="SemiBold" Text=""/>
+                                <Button x:Name="RecoveryButton" Content="Create recovery code" Style="{StaticResource Primary}" HorizontalAlignment="Left" Click="OnCreateRecoveryCode"/>
+                            </StackPanel>
+                        </Border>
+                        <Border Style="{StaticResource Card}">
+                            <StackPanel>
+                                <TextBlock Style="{StaticResource H2}" Text="4 · Check the allowed files"/>
                                 <TextBlock Style="{StaticResource Body}" Text="Shows exactly which files each profile lets online. Every Blizzard and Spotify file must say 'signed by …'. Anything marked REJECTED will stay offline."/>
                                 <Button Content="Show allowed files" Style="{StaticResource Secondary}" HorizontalAlignment="Left" Click="OnPrograms"/>
                             </StackPanel>
@@ -125,9 +133,9 @@
                     <WrapPanel Margin="4,14,0,0" ItemWidth="470">
                         <Border Style="{StaticResource Card}">
                             <StackPanel>
-                                <TextBlock Style="{StaticResource H2}" Text="You"/>
-                                <TextBlock x:Name="AccountText" Style="{StaticResource Body}" Text=""/>
-                                <Button x:Name="ElevateButton" Content="Restart as administrator" Style="{StaticResource Secondary}" HorizontalAlignment="Left" Click="OnElevate"/>
+                                <TextBlock Style="{StaticResource H2}" Text="Emergency restore"/>
+                                <TextBlock Style="{StaticResource Body}" Text="Ends any lock right now and restores normal internet. Needs your recovery code while a lock is active. Every use is logged."/>
+                                <Button Content="Emergency restore…" Style="{StaticResource Secondary}" HorizontalAlignment="Left" Click="OnRecover"/>
                             </StackPanel>
                         </Border>
                         <Border Style="{StaticResource Card}">
@@ -135,13 +143,6 @@
                                 <TextBlock Style="{StaticResource H2}" Text="Protection service"/>
                                 <TextBlock x:Name="ServiceText" Style="{StaticResource Body}" Text=""/>
                                 <Button x:Name="StartServiceButton" Content="Start protection service" Style="{StaticResource Secondary}" HorizontalAlignment="Left" Click="OnStartService"/>
-                            </StackPanel>
-                        </Border>
-                        <Border Style="{StaticResource Card}">
-                            <StackPanel>
-                                <TextBlock Style="{StaticResource H2}" Text="Restore normal internet"/>
-                                <TextBlock Style="{StaticResource Body}" Text="Administrator only. Removes all NetGuard rules, sets the firewall back to normal, switches the Windows rules NetGuard turned off back on, and cleans the hosts file."/>
-                                <Button Content="Restore normal internet…" Style="{StaticResource Secondary}" HorizontalAlignment="Left" Click="OnRecover"/>
                             </StackPanel>
                         </Border>
                         <Border Style="{StaticResource Card}">
@@ -154,7 +155,7 @@
                         <Border Style="{StaticResource Card}">
                             <StackPanel>
                                 <TextBlock Style="{StaticResource H2}" Text="Find blocked programs"/>
-                                <TextBlock Style="{StaticResource Body}" Text="Administrator only. If something that should work doesn't (e.g. Battle.net can't log in): start recording, try again, then show what was blocked."/>
+                                <TextBlock Style="{StaticResource Body}" Text="If something that should work doesn't (e.g. Battle.net can't log in): start recording, try again, then show what was blocked."/>
                                 <WrapPanel>
                                     <Button Content="Start recording" Style="{StaticResource Secondary}" Click="OnAuditOn"/>
                                     <Button Content="Stop recording" Style="{StaticResource Secondary}" Click="OnAuditOff"/>
@@ -170,6 +171,13 @@
                                     <Button Content="Check for updates" Style="{StaticResource Secondary}" Click="OnCheckUpdate"/>
                                     <Button x:Name="InstallUpdateButton" Content="Install update" Style="{StaticResource Primary}" IsEnabled="False" Click="OnInstallUpdate"/>
                                 </WrapPanel>
+                            </StackPanel>
+                        </Border>
+                        <Border Style="{StaticResource Card}">
+                            <StackPanel>
+                                <TextBlock Style="{StaticResource H2}" Text="Uninstall NetGuard"/>
+                                <TextBlock Style="{StaticResource Body}" Text="NetGuard protects itself, so it can only be removed from here. Restores normal internet first. Needs your recovery code while a lock is active."/>
+                                <Button Content="Uninstall NetGuard…" Style="{StaticResource Secondary}" HorizontalAlignment="Left" Click="OnUninstall"/>
                             </StackPanel>
                         </Border>
                     </WrapPanel>

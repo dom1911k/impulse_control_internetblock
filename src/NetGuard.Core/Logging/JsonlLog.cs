@@ -18,6 +18,10 @@ public static class LogTypes
     public const string ServiceStarted = "service-started";
     public const string ServiceStopped = "service-stopped";
     public const string Refused = "request-refused";
+    public const string RecoveryCodeCreated = "recovery-code-created";
+    public const string RecoveryCodeWrong = "recovery-code-wrong";
+    public const string ProtectionRelaxed = "protection-relaxed";
+    public const string UpdateStarted = "update-started";
 }
 
 /// <summary>Append-only JSON-lines log (one JSON object per line).</summary>

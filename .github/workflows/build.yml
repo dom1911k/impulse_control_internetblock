@@ -34,7 +34,7 @@ jobs:
       - name: Package zip
         shell: pwsh
         run: |
-          Copy-Item docs/TESTING-M2.md, docs/ACCOUNTS.md, docs/RECOVERY.md publish/NetGuard/
+          Copy-Item docs/TESTING-M2.md, docs/RECOVERY.md publish/NetGuard/
           Get-ChildItem publish/NetGuard -Filter *.pdb | Remove-Item
           Compress-Archive -Path publish/NetGuard/* -DestinationPath NetGuard-win-x64.zip
           # Same package under the old name, so the first ngctl builds can still update themselves.

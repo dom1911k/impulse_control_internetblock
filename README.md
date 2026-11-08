@@ -3,9 +3,8 @@
 A self-control internet lock for a Windows gaming PC. It blocks all internet except the programs
 the active profile allows. Daily use is simple, and undoing it in a weak moment is deliberately hard.
 
-> **Status: milestone 2 of 5 – protection service with self-healing, window app, installer.**
+> **Status: milestone 2 of 5 – protection service with self-healing and self-protection, recovery code, window app, installer.**
 > No cooldown unlock or tray icon yet. Test steps: [docs/TESTING-M2.md](docs/TESTING-M2.md).
-> Account separation guide: [docs/ACCOUNTS.md](docs/ACCOUNTS.md).
 > Emergency: [docs/RECOVERY.md](docs/RECOVERY.md).
 >
 > **Download:** [NetGuardSetup.exe](https://github.com/dom1911k/impulse_control_internetblock/releases/latest/download/NetGuardSetup.exe)
@@ -46,8 +45,17 @@ Rocksmith works in Steam Offline Mode.
   killed) re-applies the active profile at boot, checks every 30 s and ~1 s after any change under
   the firewall's registry key, restarts the firewall services if stopped, and logs every repair as
   *tamper*. The window app runs with normal rights and sends requests over the `NetGuard` named
-  pipe; the service identifies the caller and decides. Stricter profiles are instant; looser ones
-  need an elevated administrator (milestone 4 adds the cooldown process).
+  pipe; the service decides. Stricter profiles are instant; looser ones need the recovery code
+  (milestone 4 adds the cooldown process).
+* **Single-account self-protection.** The user's everyday account stays an administrator, so the
+  service protects itself from administrators: service DACL (no stop/config/delete), its registry
+  key and its program + data folders are read-only for Administrators and owned by SYSTEM; if the
+  process is killed, Windows restarts it after 2 s (forever). Updates are installed by the service
+  itself; uninstalling goes through the app, which relaxes protection first.
+* **Recovery code.** 30 random characters, shown once, stored only as a salted PBKDF2 hash;
+  5 wrong attempts per hour. Needed to end a lock early or uninstall during a lock; can only be
+  replaced with normal internet. Known remaining bypass (documented in `docs/LOST-CODE.md`):
+  taking ownership of the service's registry key and folders by hand.
 * **Everything is logged** as JSON lines in `C:\ProgramData\NetGuard\log.jsonl`. That folder is
   writable only by SYSTEM and Administrators; standard users can read the log.
 

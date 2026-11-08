@@ -24,15 +24,20 @@ public sealed class GuardWorker : BackgroundService
 
     protected override async Task ExecuteAsync(CancellationToken ct)
     {
-        try { DataDirSecurity.Secure(_guard.Engine.Paths); }
-        catch (Exception e) { _logger.LogWarning(e, "Could not secure the data folder"); }
+        _guard.Protect();
         _guard.Engine.Log.Append(LogTypes.ServiceStarted, new { version = GitHubReleases.CurrentVersion.ToString() }, "NetGuard service");
+        var lastProtect = DateTime.UtcNow;
 
         using var watcher = new FirewallWatcher(() => _wake.Release());
 
         while (!ct.IsCancellationRequested)
         {
             await Task.Run(_guard.Tick, ct);
+            if (DateTime.UtcNow - lastProtect > TimeSpan.FromMinutes(5))
+            {
+                await Task.Run(_guard.Protect, ct);
+                lastProtect = DateTime.UtcNow;
+            }
             try
             {
                 if (await _wake.WaitAsync(_guard.NextDelay(), ct))

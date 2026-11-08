@@ -43,6 +43,12 @@ public sealed class NetGuardState
 
     public DateTimeOffset? LastTamperUtc { get; set; }
 
+    // Recovery code: only a salted PBKDF2 hash is kept, never the code itself.
+    public string? RecoveryCodeHash { get; set; }
+    public string? RecoveryCodeSalt { get; set; }
+    public DateTimeOffset? RecoveryCodeCreatedUtc { get; set; }
+    public List<DateTimeOffset> WrongCodeAttemptsUtc { get; set; } = new();
+
     public static NetGuardState Load(string path)
     {
         if (!File.Exists(path)) return new NetGuardState();

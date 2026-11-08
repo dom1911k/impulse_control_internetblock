@@ -8,7 +8,7 @@ namespace NetGuard.Service;
 
 /// <summary>
 /// The named pipe the window app talks to. Any signed-in user may connect and ask; the service
-/// identifies the caller (and whether they are an elevated administrator) and decides.
+/// records who asked and decides.
 /// </summary>
 [SupportedOSPlatform("windows")]
 public sealed class PipeServer : BackgroundService
@@ -105,9 +105,8 @@ public sealed class PipeServer : BackgroundService
         pipe.RunAsClient(() =>
         {
             using var id = WindowsIdentity.GetCurrent(TokenAccessLevels.Query);
-            // An admin who didn't "Run as administrator" has a filtered token: IsInRole is false. That's intended.
-            caller = new CallerInfo(id.Name, new WindowsPrincipal(id).IsInRole(WindowsBuiltInRole.Administrator));
+            caller = new CallerInfo(id.Name);
         });
-        return caller ?? new CallerInfo("unknown", false);
+        return caller ?? new CallerInfo("unknown");
     }
 }

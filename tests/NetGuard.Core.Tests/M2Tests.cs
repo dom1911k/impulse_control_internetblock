@@ -21,21 +21,16 @@ public class ProfilePolicyTests
     [InlineData("Offline", "Maintenance", false)]
     [InlineData("WoW", "Maintenance", false)]
     public void Only_stricter_switches_are_instant(string? from, string to, bool allowed) =>
-        Assert.Equal(allowed, ProfilePolicy.CanSwitch(Cfg, from, to, callerIsAdmin: false).Allowed);
+        Assert.Equal(allowed, ProfilePolicy.CanSwitch(Cfg, from, to).Allowed);
 
     [Fact]
-    public void Admin_may_loosen() => Assert.True(ProfilePolicy.CanSwitch(Cfg, "Offline", "Maintenance", true).Allowed);
-
-    [Fact]
-    public void Unknown_profile_is_refused() => Assert.False(ProfilePolicy.CanSwitch(Cfg, null, "Chrome", true).Allowed);
+    public void Unknown_profile_is_refused() => Assert.False(ProfilePolicy.CanSwitch(Cfg, null, "Chrome").Allowed);
 
     [Fact]
     public void Test_locks_only_from_normal_internet()
     {
-        Assert.True(ProfilePolicy.CanStartTest(null, false, false).Allowed);
-        Assert.False(ProfilePolicy.CanStartTest("WoW", false, false).Allowed);
-        Assert.False(ProfilePolicy.CanStartTest("WoW", true, true).Allowed);
-        Assert.True(ProfilePolicy.CanStartTest("WoW", false, true).Allowed);
+        Assert.True(ProfilePolicy.CanStartTest(null).Allowed);
+        Assert.False(ProfilePolicy.CanStartTest("WoW").Allowed);
     }
 }
 
@@ -142,4 +137,48 @@ public class IpcTests
         var back = IpcJson.Deserialize<IpcResponse>(IpcJson.Serialize(resp))!;
         Assert.Equal("Offline", back.Status!.Profiles[0].Name);
     }
+}
+
+public class RecoveryCodeTests
+{
+    [Fact]
+    public void Generated_codes_look_right_and_differ()
+    {
+        var a = Security.RecoveryCode.Generate();
+        var b = Security.RecoveryCode.Generate();
+        Assert.Matches("^[A-Z2-9]{5}(-[A-Z2-9]{5}){5}$", a);
+        Assert.DoesNotMatch("[01OI]", a);
+        Assert.NotEqual(a, b);
+    }
+
+    [Fact]
+    public void Verifies_ignoring_case_spaces_and_dashes_and_stores_no_plain_code()
+    {
+        var state = new State.NetGuardState();
+        var code = Security.RecoveryCode.Generate();
+        Security.RecoveryCode.Store(state, code);
+
+        Assert.DoesNotContain(code.Replace("-", ""), state.RecoveryCodeHash + state.RecoveryCodeSalt);
+        var now = DateTimeOffset.UtcNow;
+        Assert.Equal(Security.RecoveryCode.CheckResult.Ok, Security.RecoveryCode.Check(state, code.ToLowerInvariant().Replace("-", " "), now));
+        Assert.Equal(Security.RecoveryCode.CheckResult.Wrong, Security.RecoveryCode.Check(state, "AAAAA-AAAAA", now));
+    }
+
+    [Fact]
+    public void Too_many_wrong_attempts_lock_for_an_hour()
+    {
+        var state = new State.NetGuardState();
+        var code = Security.RecoveryCode.Generate();
+        Security.RecoveryCode.Store(state, code);
+        var now = DateTimeOffset.UtcNow;
+        for (var i = 0; i < Security.RecoveryCode.MaxWrongAttemptsPerHour; i++)
+            Assert.Equal(Security.RecoveryCode.CheckResult.Wrong, Security.RecoveryCode.Check(state, "nope", now));
+
+        Assert.Equal(Security.RecoveryCode.CheckResult.TooManyAttempts, Security.RecoveryCode.Check(state, code, now.AddMinutes(30)));
+        Assert.Equal(Security.RecoveryCode.CheckResult.Ok, Security.RecoveryCode.Check(state, code, now.AddMinutes(61)));
+    }
+
+    [Fact]
+    public void No_code_yet() =>
+        Assert.Equal(Security.RecoveryCode.CheckResult.NoCode, Security.RecoveryCode.Check(new State.NetGuardState(), "x", DateTimeOffset.UtcNow));
 }

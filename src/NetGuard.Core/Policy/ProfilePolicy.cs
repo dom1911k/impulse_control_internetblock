@@ -20,23 +20,23 @@ public static class ProfilePolicy
         return target.Programs.All(p => allowed.Contains(p.Name));
     }
 
+    public const string LoosenHint =
+        "Looser than the current profile. The calm unlock process comes in milestone 4; until then only the emergency restore (recovery code) ends a lock.";
+
     /// <summary>Permanent switch to <paramref name="target"/>.</summary>
-    public static SwitchDecision CanSwitch(NetGuardConfig cfg, string? activeProfile, string target, bool callerIsAdmin)
+    public static SwitchDecision CanSwitch(NetGuardConfig cfg, string? activeProfile, string target)
     {
         var t = cfg.FindProfile(target);
         if (t == null) return new(false, $"There is no profile called '{target}'.");
         var cur = activeProfile == null ? null : cfg.FindProfile(activeProfile);
-        if (IsAtLeastAsStrict(t, cur)) return new(true, cur == null ? "from normal internet" : "stricter or equal");
-        if (callerIsAdmin) return new(true, "looser, allowed for an administrator");
-        return new(false, $"{t.Name} is looser than {cur!.Name}. Loosening will need the unlock process (coming in milestone 4); until then an administrator has to do it.");
+        return IsAtLeastAsStrict(t, cur)
+            ? new(true, cur == null ? "from normal internet" : "stricter or equal")
+            : new(false, LoosenHint);
     }
 
     /// <summary>Test locks end by themselves, so starting one while a real lock is active would be a way out.</summary>
-    public static SwitchDecision CanStartTest(string? activeProfile, bool testActive, bool callerIsAdmin)
-    {
-        if (activeProfile == null) return new(true, "no lock active");
-        if (testActive) return new(false, "A test lock is already running. End it first.");
-        if (callerIsAdmin) return new(true, "administrator");
-        return new(false, "A real lock is active. Test locks end by themselves, so they're only possible with normal internet.");
-    }
+    public static SwitchDecision CanStartTest(string? activeProfile) =>
+        activeProfile == null
+            ? new(true, "no lock active")
+            : new(false, "Test locks end by themselves, so they're only possible with normal internet.");
 }

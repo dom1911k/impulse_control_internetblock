@@ -7,12 +7,13 @@ using NetGuard.Core.Ipc;
 using NetGuard.Core.Logging;
 using NetGuard.Core.Policy;
 using NetGuard.Core.Reporting;
+using NetGuard.Core.Security;
 using NetGuard.Core.Updates;
 using NetGuard.Windows;
 
 namespace NetGuard.Service;
 
-public sealed record CallerInfo(string Name, bool IsAdmin);
+public sealed record CallerInfo(string Name);
 
 /// <summary>
 /// The service's brain: self-healing ticks and the answers to requests from the window app.
@@ -28,9 +29,12 @@ public sealed class Guard
 
     public DateTimeOffset? LastCheckUtc { get; private set; }
 
-    public Guard(ILogger<Guard> logger)
+    private readonly IHostApplicationLifetime _lifetime;
+
+    public Guard(ILogger<Guard> logger, IHostApplicationLifetime lifetime)
     {
         _logger = logger;
+        _lifetime = lifetime;
         _engine = new Engine(new ComFirewall(), new AuthenticodeVerifier(), new NetGuardPaths(), HostsFile.DefaultPath);
     }
 
@@ -101,6 +105,35 @@ public sealed class Guard
         }
     }
 
+    // ================================================================ self-protection
+
+    public static string ProgramDir => Path.GetDirectoryName(Environment.ProcessPath ?? AppContext.BaseDirectory)!;
+
+    private bool _protectionRelaxed;
+
+    /// <summary>Make sure the service, its registry key and folders are protected from administrators.</summary>
+    public void Protect()
+    {
+        lock (_gate)
+        {
+            if (_protectionRelaxed) return;
+            try
+            {
+                if (!Directory.Exists(_engine.Paths.DataDir)) DataDirSecurity.Secure(_engine.Paths);
+                var changed = SelfProtection.Apply(_engine.Paths, ProgramDir);
+                if (changed.Count > 0)
+                    _logger.LogInformation("Self-protection (re)applied: {Changed}", string.Join(", ", changed));
+                var failed = changed.Where(c => c.Contains("FAILED")).ToList();
+                if (failed.Count > 0)
+                    _engine.Log.Append(LogTypes.ApplyError, new { request = "self-protection", errors = failed }, ServiceActor);
+            }
+            catch (Exception e)
+            {
+                _logger.LogError(e, "Self-protection failed");
+            }
+        }
+    }
+
     // ================================================================ requests from the app
 
     public IpcResponse Handle(IpcRequest req, CallerInfo caller)
@@ -114,18 +147,22 @@ public sealed class Guard
                     IpcCommands.Status => new IpcResponse { Ok = true, Status = BuildStatus(caller) },
                     IpcCommands.StatusText => IpcResponse.Success(
                         $"Service:          running (version {GitHubReleases.CurrentVersion}), last check {LastCheckUtc?.ToLocalTime():T}\n" +
+                        $"Self-protection:  {(SelfProtection.IsServiceHardened() ? "on" : "OFF")}\n" +
                         StatusReader.Read(_engine).Describe()),
                     IpcCommands.Switch => Switch(req, caller),
                     IpcCommands.TestStart => TestStart(req, caller),
                     IpcCommands.TestEnd => TestEnd(caller),
-                    IpcCommands.Recover => AdminOnly(caller, req, Recover),
+                    IpcCommands.Recover => Recover(req, caller),
                     IpcCommands.Preview => Preview(req),
                     IpcCommands.Programs => Programs(),
                     IpcCommands.History => History(),
-                    IpcCommands.Detect => AdminOnly(caller, req, _ => IpcResponse.Success(Report.Detected(AppDetector.Detect()))),
-                    IpcCommands.Init => AdminOnly(caller, req, Init),
-                    IpcCommands.Audit => AdminOnly(caller, req, _ => Audit(req)),
-                    IpcCommands.Blocked => AdminOnly(caller, req, _ => Blocked()),
+                    IpcCommands.Detect => IpcResponse.Success(Report.Detected(AppDetector.Detect())),
+                    IpcCommands.Init => Init(req, caller),
+                    IpcCommands.RecoveryCreate => RecoveryCreate(req, caller),
+                    IpcCommands.Audit => Audit(req),
+                    IpcCommands.Blocked => Blocked(),
+                    IpcCommands.Update => Update(caller),
+                    IpcCommands.PrepareUninstall => PrepareUninstall(req, caller),
                     _ => IpcResponse.Fail($"Unknown request '{req.Command}'."),
                 };
             }
@@ -137,20 +174,35 @@ public sealed class Guard
         }
     }
 
-    private IpcResponse AdminOnly(CallerInfo caller, IpcRequest req, Func<CallerInfo, IpcResponse> action)
-    {
-        if (caller.IsAdmin) return action(caller);
-        return Refuse(caller, req, "This needs an administrator. Use \"Restart as administrator\" in Tools (Windows will ask for the admin password).");
-    }
-
     private IpcResponse Refuse(CallerInfo caller, IpcRequest req, string reason)
     {
         _engine.Log.Append(LogTypes.Refused, new { request = req.Command, profile = req.Profile, reason }, caller.Name);
         return IpcResponse.Fail(reason);
     }
 
+    /// <summary>Null if the request carries the right recovery code; otherwise the refusal to send back.</summary>
+    private IpcResponse? CheckCode(IpcRequest req, CallerInfo caller)
+    {
+        var state = _engine.LoadState();
+        var result = RecoveryCode.Check(state, req.Code, DateTimeOffset.UtcNow);
+        _engine.SaveState(state);
+        switch (result)
+        {
+            case RecoveryCode.CheckResult.Ok:
+                return null;
+            case RecoveryCode.CheckResult.NoCode:
+                return Refuse(caller, req, "No recovery code has been created yet.");
+            case RecoveryCode.CheckResult.TooManyAttempts:
+                return Refuse(caller, req, $"Too many wrong recovery codes. Try again in an hour.");
+            default:
+                _engine.Log.Append(LogTypes.RecoveryCodeWrong, new { request = req.Command }, caller.Name);
+                var left = RecoveryCode.MaxWrongAttemptsPerHour - state.WrongCodeAttemptsUtc.Count;
+                return IpcResponse.Fail($"That recovery code is not right. {left} attempt(s) left this hour.");
+        }
+    }
+
     private NetGuardConfig RequireConfig() =>
-        TryLoadConfig() ?? throw new InvalidOperationException("NetGuard isn't set up yet. An administrator needs to run Setup → Create configuration.");
+        TryLoadConfig() ?? throw new InvalidOperationException("NetGuard isn't set up yet: Setup → Create configuration.");
 
     private StatusDto BuildStatus(CallerInfo caller)
     {
@@ -166,15 +218,18 @@ public sealed class Guard
             LastCheckUtc = LastCheckUtc,
             LastTamperUtc = state.LastTamperUtc,
             CallerName = caller.Name,
-            CallerIsAdmin = caller.IsAdmin,
+            RecoveryCodeExists = RecoveryCode.Exists(state),
+            RecoveryCodeCreatedUtc = state.RecoveryCodeCreatedUtc,
+            SelfProtectionActive = !_protectionRelaxed,
         };
         if (cfg == null) return dto;
 
-        var testActive = state.ActiveProfile != null && state.TestMode != null;
         foreach (var p in cfg.Profiles)
         {
-            var sw = ProfilePolicy.CanSwitch(cfg, state.ActiveProfile, p.Name, caller.IsAdmin);
-            var test = ProfilePolicy.CanStartTest(state.ActiveProfile, testActive, caller.IsAdmin);
+            var sw = ProfilePolicy.CanSwitch(cfg, state.ActiveProfile, p.Name);
+            if (sw.Allowed && !RecoveryCode.Exists(state))
+                sw = new SwitchDecision(false, "Create your recovery code first (Setup step 3). It's your way out in an emergency.");
+            var test = ProfilePolicy.CanStartTest(state.ActiveProfile);
             dto.Profiles.Add(new ProfileDto
             {
                 Name = p.Name,
@@ -196,7 +251,9 @@ public sealed class Guard
         var cfg = RequireConfig();
         var state = _engine.LoadState();
         var target = req.Profile ?? throw new ArgumentException("Which profile?");
-        var decision = ProfilePolicy.CanSwitch(cfg, state.ActiveProfile, target, caller.IsAdmin);
+        if (!RecoveryCode.Exists(state))
+            return Refuse(caller, req, "Create your recovery code first (Setup step 3). Without it there's no way out of a lock in an emergency.");
+        var decision = ProfilePolicy.CanSwitch(cfg, state.ActiveProfile, target);
         if (!decision.Allowed) return Refuse(caller, req, decision.Reason);
 
         // A permanent lock must not be undone by a leftover test-mode safety task.
@@ -211,7 +268,7 @@ public sealed class Guard
     {
         var cfg = RequireConfig();
         var state = _engine.LoadState();
-        var decision = ProfilePolicy.CanStartTest(state.ActiveProfile, state.TestMode != null, caller.IsAdmin);
+        var decision = ProfilePolicy.CanStartTest(state.ActiveProfile);
         if (!decision.Allowed) return Refuse(caller, req, decision.Reason);
         var minutes = req.Minutes ?? cfg.Timings.TestModeMinutes;
         var (info, result) = TestMode.Start(_engine, cfg, req.Profile ?? throw new ArgumentException("Which profile?"), minutes, caller.Name);
@@ -228,9 +285,11 @@ public sealed class Guard
         return IpcResponse.Success("Normal internet is back.\n\n" + Report.Result(result));
     }
 
-    private IpcResponse Recover(CallerInfo caller)
+    /// <summary>Emergency restore: needs the recovery code while a lock is active.</summary>
+    private IpcResponse Recover(IpcRequest req, CallerInfo caller)
     {
-        var (plan, result) = _engine.Recover("restored by an administrator from the NetGuard window", caller.Name);
+        if (_engine.LoadState().ActiveProfile != null && CheckCode(req, caller) is { } refused) return refused;
+        var (plan, result) = _engine.Recover("emergency restore with recovery code", caller.Name);
         try { DeadManSwitch.Disarm(); } catch { }
         return IpcResponse.Success(Report.Plan(plan) + "\n" + Report.Result(result) + (result.Success ? "\nNormal internet is back." : ""));
     }
@@ -264,15 +323,34 @@ public sealed class Guard
         return new IpcResponse { Ok = true, History = rows };
     }
 
-    private IpcResponse Init(CallerInfo caller)
+    /// <summary>Re-creating the config could add programs, i.e. loosen: only with normal internet (or the code).</summary>
+    private IpcResponse Init(IpcRequest req, CallerInfo caller)
     {
+        if (_engine.LoadState().ActiveProfile != null && CheckCode(req, caller) is { } refused) return refused;
         var d = AppDetector.Detect();
         var cfg = DefaultConfig.Create(d);
         DataDirSecurity.Secure(_engine.Paths);
         cfg.Save(_engine.Paths.ConfigFile);
         _engine.Log.Append(LogTypes.ConfigCreated, new { detected = d }, caller.Name);
-        return IpcResponse.Success(Report.Detected(d) + $"\nConfiguration saved to {_engine.Paths.ConfigFile}.\n" +
-                                   "Only SYSTEM and administrators can change NetGuard's folder.");
+        SelfProtection.Apply(_engine.Paths, ProgramDir);
+        return IpcResponse.Success(Report.Detected(d) + $"\nConfiguration saved.\n\nNext: step 3, create your recovery code.");
+    }
+
+    /// <summary>
+    /// A new code may only be created with normal internet: otherwise "make a new code, then use it"
+    /// would be a way out of a lock. Returned to the app exactly once.
+    /// </summary>
+    private IpcResponse RecoveryCreate(IpcRequest req, CallerInfo caller)
+    {
+        var state = _engine.LoadState();
+        if (state.ActiveProfile != null)
+            return Refuse(caller, req, "A new recovery code can only be created while you have normal internet.");
+        var code = RecoveryCode.Generate();
+        var replaced = RecoveryCode.Exists(state);
+        RecoveryCode.Store(state, code);
+        _engine.SaveState(state);
+        _engine.Log.Append(LogTypes.RecoveryCodeCreated, new { reason = replaced ? "replaced the old code" : "first code" }, caller.Name);
+        return IpcResponse.Success(code);
     }
 
     private static IpcResponse Audit(IpcRequest req)
@@ -292,5 +370,54 @@ public sealed class Guard
         foreach (var a in apps)
             sb.AppendLine($"{a.Count,6}x  {a.Application}\n        last {a.LastSeen:T} → {string.Join(", ", a.Destinations)}");
         return IpcResponse.Success(sb.ToString());
+    }
+
+    /// <summary>
+    /// Updates are installed by the service (as SYSTEM), because NetGuard's folders are read-only for
+    /// administrators. Only with normal internet or in Maintenance – and the download needs internet anyway.
+    /// </summary>
+    private IpcResponse Update(CallerInfo caller)
+    {
+        var state = _engine.LoadState();
+        var cfg = TryLoadConfig();
+        var active = state.ActiveProfile == null ? null : cfg?.FindProfile(state.ActiveProfile);
+        if (active != null && active.Kind != ProfileKind.AllowAll)
+            return IpcResponse.Fail("Updates can be installed with normal internet or in Maintenance.");
+
+        var release = Updater.CheckLatestAsync().GetAwaiter().GetResult();
+        if (release.Version <= GitHubReleases.CurrentVersion)
+            return IpcResponse.Success($"NetGuard is up to date ({GitHubReleases.CurrentVersion}).");
+        var path = Updater.DownloadInstallerAsync(release).GetAwaiter().GetResult();
+        _engine.Log.Append(LogTypes.UpdateStarted, new { from = GitHubReleases.CurrentVersion.ToString(), to = release.Version.ToString() }, caller.Name);
+
+        // The installer stops this service, replaces the files and starts it again.
+        System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(path, "/VERYSILENT /SUPPRESSMSGBOXES /NORESTART")
+        {
+            UseShellExecute = false,
+            CreateNoWindow = true,
+        });
+        return IpcResponse.Success($"Installing version {release.Version}. NetGuard closes now; open it again in about a minute.");
+    }
+
+    /// <summary>
+    /// Uninstalling: allowed with normal internet, or during a lock with the recovery code. Restores normal
+    /// internet, gives administrators their rights back, and stops this service, so the normal Windows
+    /// uninstaller can run.
+    /// </summary>
+    private IpcResponse PrepareUninstall(IpcRequest req, CallerInfo caller)
+    {
+        if (_engine.LoadState().ActiveProfile != null && CheckCode(req, caller) is { } refused) return refused;
+
+        _engine.Recover("preparing to uninstall", caller.Name);
+        try { DeadManSwitch.Disarm(); } catch { }
+        _protectionRelaxed = true;
+        SelfProtection.Relax(_engine.Paths, ProgramDir);
+        ProcessRunner.Run("sc.exe", $"config {ServiceControl.ServiceName} start= demand");
+        ProcessRunner.Run("sc.exe", $"failure {ServiceControl.ServiceName} reset= 0 actions= \"\"");
+        _engine.Log.Append(LogTypes.ProtectionRelaxed, new { reason = "uninstall" }, caller.Name);
+
+        // Stop ourselves shortly after answering.
+        _ = Task.Run(async () => { await Task.Delay(1500); _lifetime.StopApplication(); });
+        return IpcResponse.Success("Normal internet is back and NetGuard's protection is off. The uninstaller starts now.");
     }
 }

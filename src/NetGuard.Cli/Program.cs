@@ -7,6 +7,7 @@ using NetGuard.Core.Logging;
 using NetGuard.Core.Planning;
 using NetGuard.Core.State;
 using NetGuard.Core.Updates;
+using NetGuard.Core.Ipc;
 using NetGuard.Windows;
 
 namespace NetGuard.Cli;
@@ -27,10 +28,10 @@ Usage (from an ADMINISTRATOR terminal):
                                        Apply for N minutes (default 3, max 15), then automatically
                                        restore normal internet (dead-man switch).
   ngctl apply <profile> --permanent    Apply with NO automatic revert (only use from milestone 2 on)
-  ngctl recover [--dry-run] [--reason "text"]
-                                       EMERGENCY: stop + disable the NetGuard service, then normal
-                                       internet again (remove NetGuard rules, default outbound Allow,
-                                       re-enable rules NetGuard disabled, clean hosts file).
+  ngctl recover --code <recovery code>
+                                       EMERGENCY: normal internet again (asks the running service).
+                                       If the service isn't running, no code is needed: NetGuard's
+                                       rules are removed and default outbound set back to Allow directly.
   ngctl service status|on|off          Show / start (and enable) / stop (and disable) the service
   ngctl diag audit on|off              Turn Windows' logging of blocked connections on/off
   ngctl diag blocked [--minutes N]     List programs whose connections were blocked (default 10 min)
@@ -45,6 +46,12 @@ Profiles in the default config: Offline, WoW, Maintenance
     private static int Main(string[] args)
     {
         try { return Run(args); }
+        catch (UnauthorizedAccessException)
+        {
+            Err("Access denied: NetGuard protects its files and service, even from administrators.");
+            Console.WriteLine("Use the NetGuard window instead (emergency restore: Tools → Emergency restore, with your recovery code).");
+            return 1;
+        }
         catch (Exception e)
         {
             Err("Error: " + e.Message);
@@ -313,11 +320,31 @@ Profiles in the default config: Offline, WoW, Maintenance
 
     private static int Recover(Engine engine, Args a)
     {
-        var state = engine.LoadState();
-        var plan = engine.PlanRecovery(state);
         var fromTask = a.Has("--from-task");
         var quiet = fromTask || a.Has("--quiet");
 
+        // While the service runs it owns everything (and protects its files from administrators):
+        // ask it, with the recovery code. The dead-man task runs as SYSTEM and may act directly.
+        if (!fromTask && ServiceControl.IsRunning())
+        {
+            var code = a.Value("--code");
+            if (code == null)
+            {
+                Err("The NetGuard service is running. Emergency restore needs your recovery code:");
+                Console.WriteLine("  ngctl recover --code XXXXX-XXXXX-XXXXX-XXXXX-XXXXX-XXXXX");
+                Console.WriteLine("(Or in the NetGuard window: Tools → Emergency restore.)");
+                return 1;
+            }
+            var r = new GuardClient().SendAsync(new NetGuard.Core.Ipc.IpcRequest { Command = NetGuard.Core.Ipc.IpcCommands.Recover, Code = code })
+                .GetAwaiter().GetResult();
+            if (!r.Ok) { Err(r.Error ?? "Refused."); return 1; }
+            if (!quiet) { Console.WriteLine(r.Text); Ok("Normal internet restored."); }
+            return 0;
+        }
+
+        // Service not running (broken, stopped, or being uninstalled): restore directly.
+        var state = engine.LoadState();
+        var plan = engine.PlanRecovery(state);
         if (!quiet)
         {
             Head("Recovery – restore normal internet");
@@ -329,16 +356,19 @@ Profiles in the default config: Offline, WoW, Maintenance
             return 0;
         }
 
-        // Emergency recovery switches the service off first – otherwise it would heal the lock right back.
-        // (The dead-man task only ends a test lock and leaves the service alone.)
-        if (!fromTask && ServiceControl.IsInstalled() && !ServiceControl.IsDisabled())
-        {
-            ServiceControl.StopAndDisable();
-            if (!quiet) Warn("The NetGuard service is now stopped and disabled. Turn it back on with: ngctl service on");
-        }
-
         var reason = a.Value("--reason") ?? (fromTask ? "dead-man switch" : "manual recovery via ngctl");
-        var (_, result) = engine.Recover(reason, fromTask ? "SYSTEM (dead-man task)" : WinEnv.CurrentUser());
+        ExecutionResult result;
+        try
+        {
+            (_, result) = engine.Recover(reason, fromTask ? "SYSTEM (dead-man task)" : WinEnv.CurrentUser());
+        }
+        catch (UnauthorizedAccessException)
+        {
+            // NetGuard's data folder is read-only for administrators (self-protection). The firewall isn't:
+            // undo the lock anyway, just without updating NetGuard's own records.
+            result = engine.Execute(plan, state);
+            if (!quiet) Warn("NetGuard's files are protected, so the history wasn't updated – the firewall was restored anyway.");
+        }
         try { DeadManSwitch.Disarm(); } catch { /* best effort */ }
         if (!quiet)
         {
@@ -403,7 +433,12 @@ Profiles in the default config: Offline, WoW, Maintenance
                 Ok("NetGuard service is running and starts automatically with Windows.");
                 return 0;
             case "off":
-                ServiceControl.StopAndDisable();
+                try { ServiceControl.StopAndDisable(); }
+                catch (Exception e) when (e is InvalidOperationException or System.ComponentModel.Win32Exception)
+                {
+                    Err("The service protects itself and can't be stopped. To remove NetGuard: NetGuard window → Tools → Uninstall NetGuard.");
+                    return 1;
+                }
                 Warn("NetGuard service stopped and disabled. The firewall rules stay as they are, but nothing repairs them now.");
                 return 0;
             default:
@@ -526,7 +561,7 @@ internal sealed class Args
         {
             if (_a[i].StartsWith("--"))
             {
-                if (_a[i] is "--minutes" or "--reason" or "--tail") i++;
+                if (_a[i] is "--minutes" or "--reason" or "--tail" or "--code") i++;
                 continue;
             }
             list.Add(_a[i]);

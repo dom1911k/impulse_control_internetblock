@@ -45,9 +45,9 @@ public partial class MainWindow : Window
         await LoadHistoryAsync();
         _timer.Start();
         Output.Text = _serviceDown
-            ? "The NetGuard protection service isn't running.\n\nInstall or repair NetGuard with NetGuardSetup.exe, or (as administrator) Tools → Start protection service."
-            : _status?.ConfigExists == false
-                ? "Welcome to NetGuard.\n\nFirst time here? Tools → Restart as administrator, then Setup: Find apps → Create configuration."
+            ? "The NetGuard protection service isn't running.\n\nInstall or repair NetGuard with NetGuardSetup.exe, or Tools → Start protection service."
+            : _status?.ConfigExists == false || _status?.RecoveryCodeExists == false
+                ? "Welcome to NetGuard.\n\nFirst time here? Open the Setup tab: Find apps → Create configuration → Create recovery code."
                 : "Welcome to NetGuard.\n\nSwitch to a profile, start a test lock, or use Preview to see exactly what would change.";
     }
 
@@ -89,12 +89,6 @@ public partial class MainWindow : Window
 
     private void ApplyStatus()
     {
-        var elevated = WinEnv.IsElevatedAdmin();
-        AccountText.Text = _status != null
-            ? $"Signed in as {_status.CallerName} – {(_status.CallerIsAdmin ? "administrator" : "normal rights")}."
-            : $"Signed in as {WinEnv.CurrentUser()}{(elevated ? " – administrator" : "")}.";
-        ElevateButton.Visibility = elevated ? Visibility.Collapsed : Visibility.Visible;
-
         if (_serviceDown || _status == null)
         {
             StatusTitle.Text = "Protection service isn't running";
@@ -107,15 +101,24 @@ public partial class MainWindow : Window
             return;
         }
 
-        ServiceText.Text = $"Running (version {_status.ServiceVersion}). Last check {_status.LastCheckUtc?.ToLocalTime():T}." +
+        ServiceText.Text = $"Running (version {_status.ServiceVersion}), self-protection {(_status.SelfProtectionActive ? "on" : "off")}. " +
+                           $"Last check {_status.LastCheckUtc?.ToLocalTime():T}." +
                            (_status.LastTamperUtc is { } t ? $"\nLast repair of a change: {t.ToLocalTime():g}." : "");
+        RecoveryStateText.Text = _status.RecoveryCodeExists
+            ? $"✓ You have a recovery code (created {_status.RecoveryCodeCreatedUtc?.ToLocalTime():g})."
+            : "No recovery code yet – locks can't be started until you create one.";
+        RecoveryButton.Content = _status.RecoveryCodeExists ? "Replace recovery code…" : "Create recovery code";
+        RecoveryButton.IsEnabled = _status.ActiveProfile == null;
+        RecoveryButton.ToolTip = _status.ActiveProfile == null ? null : "Only possible with normal internet.";
         StartServiceButton.Visibility = Visibility.Collapsed;
 
         var profile = _status.ActiveProfile;
         if (profile == null)
         {
             StatusTitle.Text = "Normal internet";
-            StatusDetail.Text = _status.ConfigExists ? "No profile is active." : "NetGuard isn't set up yet – an administrator needs to run Setup.";
+            StatusDetail.Text = !_status.ConfigExists || !_status.RecoveryCodeExists
+                ? "NetGuard isn't fully set up yet – see the Setup tab."
+                : "No profile is active.";
             Banner.Background = Brush("#2E3A46");
         }
         else
@@ -151,7 +154,7 @@ public partial class MainWindow : Window
     {
         // Only rebuild when something visible changed (keeps buttons from flickering every 3 s).
         var sig = status == null ? "down" :
-            string.Join("|", status.Profiles.Select(p => $"{p.Name}{p.IsActive}{p.SwitchAllowed}{p.TestAllowed}")) + status.ConfigExists;
+            string.Join("|", status.Profiles.Select(p => $"{p.Name}{p.IsActive}{p.SwitchAllowed}{p.TestAllowed}{p.SwitchHint}")) + status.ConfigExists;
         if (sig == _cardsSignature) return;
         _cardsSignature = sig;
 
@@ -251,12 +254,9 @@ public partial class MainWindow : Window
     {
         var p = _status?.Profiles.FirstOrDefault(x => x.Name == profile);
         if (p == null) return;
-        var looser = p.SwitchHint.StartsWith("looser", StringComparison.OrdinalIgnoreCase);
         var msg = $"Switch to {p.Name} now?\n\n{p.Description}\n\n" +
-                  (looser
-                      ? "This is looser than the current profile. It's allowed because you're an administrator."
-                      : "This lock has no end time. Going back to something looser will need an administrator " +
-                        "(the unlock process comes in milestone 4). Stricter profiles are always one click away.");
+                  "This lock has no end time. Stricter profiles are always one click away. Going back to something looser " +
+                  "needs the unlock process (milestone 4) – until then only the emergency restore with your recovery code.";
         if (MessageBox.Show(this, msg, "Switch profile", MessageBoxButton.OKCancel, MessageBoxImage.Question) != MessageBoxResult.OK) return;
         await RunAsync($"Switch to {p.Name}", new IpcRequest { Command = IpcCommands.Switch, Profile = profile });
     }
@@ -327,10 +327,63 @@ public partial class MainWindow : Window
 
     private async void OnRecover(object sender, RoutedEventArgs e)
     {
-        if (MessageBox.Show(this, "Restore normal internet now?\n\nThis removes every NetGuard rule and switches the firewall back to normal. Administrators only.",
-                "Restore normal internet", MessageBoxButton.OKCancel, MessageBoxImage.Question) != MessageBoxResult.OK)
+        string? code = null;
+        if (_status?.ActiveProfile != null)
+        {
+            code = Dialogs.AskRecoveryCode(this,
+                $"Emergency restore ends the {_status.ActiveProfile} lock now and brings back normal internet. It will be logged.");
+            if (code == null) return;
+        }
+        else if (MessageBox.Show(this, "No lock is active. Run the restore anyway (removes any NetGuard rules left over)?",
+                     "Emergency restore", MessageBoxButton.OKCancel, MessageBoxImage.Question) != MessageBoxResult.OK)
             return;
-        await RunAsync("Restore normal internet", new IpcRequest { Command = IpcCommands.Recover });
+        await RunAsync("Emergency restore", new IpcRequest { Command = IpcCommands.Recover, Code = code });
+    }
+
+    private async void OnCreateRecoveryCode(object sender, RoutedEventArgs e)
+    {
+        if (_status?.RecoveryCodeExists == true &&
+            MessageBox.Show(this, "Create a new recovery code? The old one stops working.", "Recovery code",
+                MessageBoxButton.OKCancel, MessageBoxImage.Question) != MessageBoxResult.OK)
+            return;
+        IpcResponse r;
+        try { r = await _client.SendAsync(new IpcRequest { Command = IpcCommands.RecoveryCreate }); }
+        catch (Exception ex) { Output.Text = "Could not create a recovery code: " + ex.Message; return; }
+        if (!r.Ok || r.Text == null) { Output.Text = "Could not create a recovery code: " + r.Error; return; }
+        Dialogs.ShowNewRecoveryCode(this, r.Text);
+        Output.Text = "Recovery code created. Keep the paper safe.";
+        _cardsSignature = "";
+        await RefreshStatusAsync();
+        await LoadHistoryAsync();
+    }
+
+    private async void OnUninstall(object sender, RoutedEventArgs e)
+    {
+        string? code = null;
+        if (_status?.ActiveProfile != null)
+        {
+            code = Dialogs.AskRecoveryCode(this, "A lock is active. Uninstalling during a lock needs your recovery code.");
+            if (code == null) return;
+        }
+        else if (MessageBox.Show(this, "Uninstall NetGuard?\n\nNormal internet is restored and NetGuard's protection is switched off. " +
+                                       "Then the Windows uninstaller opens (Windows asks for permission).",
+                     "Uninstall NetGuard", MessageBoxButton.OKCancel, MessageBoxImage.Question) != MessageBoxResult.OK)
+            return;
+
+        var r = await RunAsync("Preparing to uninstall", new IpcRequest { Command = IpcCommands.PrepareUninstall, Code = code });
+        if (r?.Ok != true) return;
+        await Task.Delay(3000); // let the service stop
+        var uninstaller = System.IO.Path.Combine(AppContext.BaseDirectory, "unins000.exe");
+        if (!System.IO.File.Exists(uninstaller)) uninstaller = System.IO.Path.Combine(System.IO.Path.GetDirectoryName(Environment.ProcessPath!)!, "unins000.exe");
+        try
+        {
+            Process.Start(new ProcessStartInfo(uninstaller) { UseShellExecute = true, Verb = "runas" });
+            Application.Current.Shutdown();
+        }
+        catch (Exception ex)
+        {
+            Output.Text += "\n\nCould not start the uninstaller (" + ex.Message + "). Use Windows Settings → Apps → NetGuard → Uninstall.";
+        }
     }
 
     private async void OnStatus(object sender, RoutedEventArgs e) =>
@@ -345,28 +398,16 @@ public partial class MainWindow : Window
     private async void OnShowBlocked(object sender, RoutedEventArgs e) =>
         await RunAsync("Blocked programs (last 10 minutes)", new IpcRequest { Command = IpcCommands.Blocked });
 
-    private void OnElevate(object sender, RoutedEventArgs e)
-    {
-        try
-        {
-            Process.Start(new ProcessStartInfo(Environment.ProcessPath!) { UseShellExecute = true, Verb = "runas" });
-            Application.Current.Shutdown();
-        }
-        catch (Win32Exception) { /* the user cancelled the Windows prompt */ }
-    }
-
     private void OnStartService(object sender, RoutedEventArgs e)
     {
-        if (!WinEnv.IsElevatedAdmin())
-        {
-            Output.Text = "Starting the service needs an administrator: Tools → Restart as administrator, then try again.";
-            return;
-        }
+        var ngctl = System.IO.Path.Combine(System.IO.Path.GetDirectoryName(Environment.ProcessPath!)!, "ngctl.exe");
         try
         {
-            ServiceControl.EnableAndStart();
-            Output.Text = "The NetGuard protection service is running again and starts automatically with Windows.";
+            var p = Process.Start(new ProcessStartInfo(ngctl, "service on") { UseShellExecute = true, Verb = "runas", WindowStyle = ProcessWindowStyle.Hidden });
+            p?.WaitForExit(30_000);
+            Output.Text = "Asked Windows to start the NetGuard protection service.";
         }
+        catch (Win32Exception) { Output.Text = "Cancelled."; }
         catch (Exception ex) { Output.Text = "Could not start the service: " + ex.Message; }
         _ = RefreshStatusAsync();
     }
@@ -394,18 +435,16 @@ public partial class MainWindow : Window
     private async void OnInstallUpdate(object sender, RoutedEventArgs e)
     {
         if (_latest == null) return;
-        if (MessageBox.Show(this, $"Install version {_latest.Version}?\n\nWindows will ask for administrator permission. NetGuard closes during the update and opens again afterwards.",
+        if (MessageBox.Show(this, $"Install version {_latest.Version}?\n\nThe NetGuard service downloads and installs it. NetGuard closes; open it again in about a minute.",
                 "Update", MessageBoxButton.OKCancel, MessageBoxImage.Question) != MessageBoxResult.OK)
             return;
         InstallUpdateButton.IsEnabled = false;
-        Output.Text = "Downloading the installer …";
-        try
+        var r = await RunAsync("Installing update", new IpcRequest { Command = IpcCommands.Update });
+        if (r?.Ok == true && r.Text?.StartsWith("Installing") == true)
         {
-            var path = await Updater.DownloadInstallerAsync(_latest, m => Dispatcher.Invoke(() => Output.Text += "\n" + m));
-            Updater.RunInstaller(path, silent: true);
+            MessageBox.Show(this, r.Text, "Update", MessageBoxButton.OK, MessageBoxImage.Information);
             Application.Current.Shutdown();
         }
-        catch (Win32Exception) { Output.Text += "\nCancelled."; InstallUpdateButton.IsEnabled = true; }
-        catch (Exception ex) { Output.Text += "\nThe update did not work: " + ex.Message; InstallUpdateButton.IsEnabled = true; }
+        else InstallUpdateButton.IsEnabled = true;
     }
 }
