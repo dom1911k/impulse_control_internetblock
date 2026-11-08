@@ -228,3 +228,54 @@ public class EngineTests
         Assert.Equal(new[] { "profile-applied", "recovery" }, types);
     }
 }
+
+public class PlanOrderTests
+{
+    private static int Last<T>(Plan p) where T : PlanAction => p.Actions.FindLastIndex(a => a is T);
+    private static int First<T>(Plan p) where T : PlanAction => p.Actions.FindIndex(a => a is T);
+
+    [Fact]
+    public void Locking_adds_allow_rules_before_blocking_by_default()
+    {
+        using var env = new TestEnv();
+        var cfg = env.CreateStandardPc();
+        env.Firewall.Rules.Add(new FwRule { Name = "World of Warcraft", Direction = FwDirection.Out, Action = FwAction.Allow, Enabled = true, Program = @"C:\wow\Wow.exe" });
+        var engine = env.CreateEngine();
+
+        var plan = engine.PlanApply(cfg, engine.BuildDesired(cfg, "WoW"));
+
+        var lastAllowAdd = plan.Actions.FindLastIndex(a => a is AddRuleAction ar && ar.Rule.Action == FwAction.Allow);
+        var firstBlockDefault = First<SetDefaultOutboundAction>(plan);
+        Assert.True(lastAllowAdd >= 0 && firstBlockDefault > lastAllowAdd, "allow rules must exist before default outbound becomes Block");
+        Assert.True(firstBlockDefault > Last<DisableForeignRuleAction>(plan), "foreign rules are switched off before Block, and Block is last");
+        Assert.True(plan.Actions.FindIndex(a => a is AddRuleAction ar && ar.Rule.Action == FwAction.Block)
+                    > lastAllowAdd, "Steam block rules come after the allow rules");
+    }
+
+    [Fact]
+    public void Switching_profiles_adds_new_rules_before_removing_old_ones()
+    {
+        using var env = new TestEnv();
+        var cfg = env.CreateStandardPc();
+        var engine = env.CreateEngine();
+        engine.ApplyProfile(cfg, "Offline", "test", null);
+
+        var plan = engine.PlanApply(cfg, engine.BuildDesired(cfg, "WoW"));
+        Assert.True(Last<AddRuleAction>(plan) < First<RemoveRuleAction>(plan));
+    }
+
+    [Fact]
+    public void Loosening_allows_first()
+    {
+        using var env = new TestEnv();
+        var cfg = env.CreateStandardPc();
+        var engine = env.CreateEngine();
+        engine.ApplyProfile(cfg, "WoW", "test", null);
+
+        var plan = engine.PlanApply(cfg, engine.BuildDesired(cfg, "Maintenance"));
+        Assert.Equal(0, First<SetDefaultOutboundAction>(plan));
+
+        var recovery = engine.PlanRecovery(engine.LoadState());
+        Assert.Equal(0, First<SetDefaultOutboundAction>(recovery));
+    }
+}

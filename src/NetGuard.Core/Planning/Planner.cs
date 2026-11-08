@@ -7,28 +7,36 @@ public static class Planner
 {
     private static readonly FwProfileType[] AllProfiles = { FwProfileType.Domain, FwProfileType.Private, FwProfileType.Public };
 
-    /// <summary>What must change so the firewall matches <paramref name="desired"/>. Empty plan = nothing to do.</summary>
+    /// <summary>
+    /// What must change so the firewall matches <paramref name="desired"/>. Empty plan = nothing to do.
+    ///
+    /// Order matters ("make before break"): Windows re-checks every open connection whenever the
+    /// firewall changes. If "block by default" went in before a program's allow rule, a running game
+    /// would have its connection silently dropped in that gap. So:
+    ///   tightening (default Block): add/repair rules → remove old rules → disable foreign rules → Block
+    ///   loosening  (default Allow): Allow first → then the rule changes
+    /// </summary>
     public static Plan Diff(DesiredState desired, FirewallSnapshot snap, bool hostsUpToDate, IReadOnlyCollection<string> protectedGroups)
     {
         var plan = new Plan();
+        var tightening = desired.DefaultOutbound == FwAction.Block;
 
-        // Firewall on + default outbound for all three profiles
+        // Default outbound for all three profiles (+ firewall on)
+        var profileActions = new List<PlanAction>();
         foreach (var p in AllProfiles)
         {
             var cur = snap.Profiles.TryGetValue(p, out var s) ? s : new ProfileSettings(false, FwAction.Allow);
-            if (!cur.Enabled) plan.Add(new EnableFirewallAction(p));
-            if (cur.DefaultOutbound != desired.DefaultOutbound) plan.Add(new SetDefaultOutboundAction(p, desired.DefaultOutbound));
+            if (cur.DefaultOutbound != desired.DefaultOutbound) profileActions.Add(new SetDefaultOutboundAction(p, desired.DefaultOutbound));
+            if (!cur.Enabled) profileActions.Add(new EnableFirewallAction(p));
         }
+        if (!tightening) plan.Actions.AddRange(profileActions);
 
-        // Exactly the expected NetGuard rules
+        // Exactly the expected NetGuard rules: new/repaired ones first, unwanted ones afterwards
         var existing = snap.NetGuardRules.GroupBy(r => r.Name, StringComparer.Ordinal).ToDictionary(g => g.Key, g => g.ToList(), StringComparer.Ordinal);
         var wanted = desired.Rules.Select(r => r.Name).ToHashSet(StringComparer.Ordinal);
 
-        foreach (var (name, rules) in existing.OrderBy(k => k.Key, StringComparer.Ordinal))
-            if (!wanted.Contains(name))
-                plan.Add(new RemoveRuleAction(name, "not part of profile " + desired.ProfileName));
-
-        foreach (var spec in desired.Rules)
+        // Allow rules before block rules, so allowed programs never wait on the (many) Steam blocks.
+        foreach (var spec in desired.Rules.OrderBy(r => r.Action == FwAction.Allow ? 0 : 1))
         {
             if (existing.TryGetValue(spec.Name, out var cur))
             {
@@ -37,6 +45,10 @@ public static class Planner
             }
             plan.Add(new AddRuleAction(spec));
         }
+
+        foreach (var (name, _) in existing.OrderBy(k => k.Key, StringComparer.Ordinal))
+            if (!wanted.Contains(name))
+                plan.Add(new RemoveRuleAction(name, "not part of profile " + desired.ProfileName));
 
         // No foreign outbound allow rules may stay active in allow-list profiles
         if (desired.DisableForeignAllowRules)
@@ -50,6 +62,9 @@ public static class Planner
         }
 
         if (!hostsUpToDate) plan.Add(new WriteHostsAction(desired.BlockedHosts));
+
+        // Tightening: the switch to "block by default" comes last, once every allow rule is in place.
+        if (tightening) plan.Actions.AddRange(profileActions);
         return plan;
     }
 
