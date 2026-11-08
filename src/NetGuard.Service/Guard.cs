@@ -760,9 +760,12 @@ public sealed class Guard
         {
             cfg.Validate();
             cfg.Save(_engine.Paths.ConfigFile);
-            _engine.Log.Append(LogTypes.PlanChanged, new { profile, change = req.Plan == null ? "plan removed" : "stricter plan, applied now" }, caller.Name);
+            var how = state.ActiveProfile == null ? "applied now (no lock active)" : "stricter plan, applied now";
+            _engine.Log.Append(LogTypes.PlanChanged, new { profile, change = req.Plan == null ? $"plan removed – {how}" : how }, caller.Name);
             if (state.ActiveProfile != null) _engine.Heal(cfg, caller.Name);
-            return IpcResponse.Success("Saved – the plan is stricter (or equal), so it applies right away.");
+            return IpcResponse.Success(state.ActiveProfile == null
+                ? "Saved and applied right away – no profile is active, so you can adjust freely. Once you start a lock, looser changes take 72 hours."
+                : "Saved – the plan is stricter (or equal), so it applies right away.");
         }
         _engine.Log.Append(LogTypes.PlanChangePending, new { profile, effective = _rules.LocalText(pending.EffectiveUtc) }, caller.Name);
         return IpcResponse.Success($"This plan is looser than the current one, so it takes effect in {cfg.Timings.PlanLoosenDelayHours} hours " +

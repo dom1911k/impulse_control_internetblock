@@ -313,7 +313,11 @@ public sealed class LockRules
 
     // ================================================================ plan changes
 
-    /// <summary>Stricter: applied now (returns null). Looser: queued (returns the pending change).</summary>
+    /// <summary>
+    /// Stricter: applied now (returns null). Looser: queued for the waiting time (returns the pending change) –
+    /// except while no profile is active: then nothing holds you anyway, so every change applies now
+    /// (that's when you set things up calmly).
+    /// </summary>
     public PendingPlanChange? ChangePlan(NetGuardConfig cfg, NetGuardState state, string profile, PlayPlan? newPlan, DateTimeOffset now)
     {
         var p = cfg.FindProfile(profile) ?? throw new InvalidOperationException($"There is no profile called '{profile}'.");
@@ -323,7 +327,7 @@ public sealed class LockRules
             cfg.ValidatePlan(copy);
         }
         state.PendingPlanChanges.RemoveAll(c => string.Equals(c.Profile, p.Name, StringComparison.OrdinalIgnoreCase));
-        if (IsAtLeastAsStrict(cfg, newPlan, p.Plan))
+        if (state.ActiveProfile == null || IsAtLeastAsStrict(cfg, newPlan, p.Plan))
         {
             p.Plan = newPlan;
             return null;

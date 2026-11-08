@@ -10,8 +10,8 @@ What's new:
 - **Play time.** Per game profile: weekly timetable, daily and weekly limits, counted while the
   profile is active. Outside play time you're in Offline and the game is blocked in every profile,
   Maintenance included. Warnings at 15/5/1 minutes, then an automatic switch; once a day you can
-  take 10 extra minutes (they come off the next day). Stricter plan changes apply at once; looser
-  ones after 72 hours.
+  take 10 extra minutes (they come off the next day). Stricter plan changes apply at once. Looser
+  ones apply at once while no profile is active, and after 72 hours during a lock.
 - **Changed programs.** A program pinned to its exact version that changed is blocked with a notice;
   re-approve it in Programs (with normal internet or in Maintenance).
 - **Clock protection.** Changing the Windows clock doesn't speed anything up; it's logged.
@@ -67,9 +67,9 @@ Wait 45 minutes (do something else). ✅ Tray balloon "The waiting time is over"
 Then check the limit: request two more unlocks the same day (cancel them right away). ✅ The second
 one is refused: "Today's 2 unlock requests are used up".
 
-## 5. Looser plan change
+## 5. Looser plan change during a lock
 
-**Play time** → WoW → per day **1 h** → Save. ✅ "takes effect in 72 hours", an amber box shows the
+While a profile is active (e.g. Offline): **Play time** → WoW → per day **1 h** → Save. ✅ "takes effect in 72 hours", an amber box shows the
 waiting change with **Cancel the waiting change**. Cancel it ✅.
 
 ## 6. Report back

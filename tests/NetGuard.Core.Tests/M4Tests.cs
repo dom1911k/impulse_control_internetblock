@@ -260,6 +260,17 @@ public class M4Tests
     }
 
     [Fact]
+    public void Without_an_active_lock_every_plan_change_applies_at_once()
+    {
+        var cfg = Cfg(p => { p.Windows.Add(new PlayWindow { Day = DayOfWeek.Sunday, Start = "21:00", End = "21:30" }); });
+        var st = new NetGuardState(); // normal internet
+        var looser = Evenings(new PlayPlan { GamePrograms = { "World of Warcraft" } });
+        Assert.Null(Rules.ChangePlan(cfg, st, "WoW", looser, At(0, 12)));
+        Assert.Equal(7, cfg.FindProfile("WoW")!.Plan!.Windows.Count);
+        Assert.Empty(st.PendingPlanChanges);
+    }
+
+    [Fact]
     public void Plan_validation()
     {
         var cfg = Cfg();

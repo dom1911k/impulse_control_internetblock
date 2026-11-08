@@ -82,7 +82,8 @@ public sealed class PlayTimePanel : ScrollViewer
         _root.Children.Add(T("Play time", 20, true));
         _root.Children.Add(T("Decide when a game profile may be active, and for how long. Outside these times NetGuard keeps you in the fallback " +
                              "profile, and the game itself is blocked in every profile – even in Maintenance. Play time counts while the profile is active. " +
-                             "Stricter changes apply right away; looser ones only after 72 hours.", 13, false, Muted));
+                             "Stricter changes always apply right away. Looser ones (more time, more windows, higher limits) apply right away only while " +
+                             "no profile is active – during a lock they take 72 hours. So set up and fine-tune your plan before you start a lock.", 13, false, Muted));
 
         var pick = new ComboBox { MinWidth = 200, FontSize = 14, Margin = new Thickness(0, 6, 0, 12), HorizontalAlignment = HorizontalAlignment.Left };
         foreach (var p in _plans) pick.Items.Add(p.Profile);
@@ -254,7 +255,7 @@ public sealed class PlayTimePanel : ScrollViewer
 
     private async Task SaveAsync()
     {
-        if (MessageBox.Show(_owner, $"Save this play plan for {_profile}?\n\n{Describe(_draft)}\n\nIf it's looser than the current plan, it only takes effect in 72 hours.",
+        if (MessageBox.Show(_owner, $"Save this play plan for {_profile}?\n\n{Describe(_draft)}\n\nWhile no profile is active it applies right away. During a lock, a looser plan only takes effect in 72 hours.",
                 "Play plan", MessageBoxButton.OKCancel, MessageBoxImage.Question) != MessageBoxResult.OK) return;
         await Send(new IpcRequest { Command = IpcCommands.PlanSet, Profile = _profile, Plan = _draft });
     }
