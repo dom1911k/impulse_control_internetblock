@@ -12,6 +12,7 @@ public sealed class TrayIcon : IDisposable
 {
     private readonly Forms.NotifyIcon _icon;
     private readonly Forms.ToolStripMenuItem _statusItem;
+    private readonly Forms.ToolStripMenuItem _offlineItem;
     private readonly StatusMonitor _monitor;
     private readonly Dictionary<string, Drawing.Icon> _icons = new();
     private DateTimeOffset? _lastTamperSeen;
@@ -32,6 +33,8 @@ public sealed class TrayIcon : IDisposable
         menu.Items.Add(openItem);
         menu.Items.Add(new Forms.ToolStripSeparator());
         menu.Items.Add(_statusItem);
+        _offlineItem = new Forms.ToolStripMenuItem("Switch to Offline now", null, async (_, _) => await SwitchToOfflineAsync());
+        menu.Items.Add(_offlineItem);
         menu.Items.Add(new Forms.ToolStripSeparator());
         menu.Items.Add(new Forms.ToolStripMenuItem("Hide tray icon (protection keeps running)", null, (_, _) => exit()));
 
@@ -66,6 +69,8 @@ public sealed class TrayIcon : IDisposable
         _icon.Text = text.Length > 127 ? text[..127] : text;
         _icon.Icon = IconFor(color);
         _statusItem.Text = text.Replace("NetGuard – ", "");
+        var offline = s?.Profiles.FirstOrDefault(p => p.Name.Equals("Offline", StringComparison.OrdinalIgnoreCase));
+        _offlineItem.Visible = offline is { IsActive: false, SwitchAllowed: true };
 
         if (_monitor.HasLoaded) Notify(s);
     }
@@ -114,6 +119,18 @@ public sealed class TrayIcon : IDisposable
             _warnedMaintenance = mu;
             _icon.ShowBalloonTip(6000, "NetGuard", "Maintenance ends in 5 minutes.", Forms.ToolTipIcon.Info);
         }
+    }
+
+    /// <summary>Stricter is always one click: straight from the tray.</summary>
+    private async Task SwitchToOfflineAsync()
+    {
+        try
+        {
+            var r = await new NetGuard.Windows.GuardClient().SendAsync(new IpcRequest { Command = IpcCommands.Switch, Profile = "Offline" });
+            _icon.ShowBalloonTip(4000, "NetGuard", r.Ok ? "Offline mode is on." : r.Error ?? "That didn't work.", r.Ok ? Forms.ToolTipIcon.Info : Forms.ToolTipIcon.Warning);
+        }
+        catch (Exception e) { _icon.ShowBalloonTip(4000, "NetGuard", e.Message, Forms.ToolTipIcon.Warning); }
+        await _monitor.RefreshAsync();
     }
 
     /// <summary>A small shield in the state's colour with a white padlock.</summary>

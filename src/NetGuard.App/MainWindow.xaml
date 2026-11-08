@@ -149,6 +149,7 @@
             <!-- ===== History ===== -->
             <TabItem x:Name="HistoryTab" Header="History">
                 <DockPanel Margin="4,14,0,0">
+                    <ContentControl x:Name="SummaryHost" DockPanel.Dock="Top"/>
                     <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Margin="0,0,0,10">
                         <Button Content="Refresh" Style="{StaticResource Secondary}" Click="OnRefreshHistory"/>
                         <TextBlock x:Name="HistoryCount" VerticalAlignment="Center" Foreground="{StaticResource Muted}" Margin="6,0,0,8"/>

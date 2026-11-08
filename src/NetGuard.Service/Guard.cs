@@ -290,6 +290,11 @@ public sealed class Guard
                     IpcCommands.ProgramReapprove => Reapprove(req, caller),
                     IpcCommands.PracticeStart => PracticeStart(req, caller),
                     IpcCommands.PracticeEnd => EndPractice("ended by you", caller.Name),
+                    IpcCommands.Summary => new IpcResponse
+                    {
+                        Ok = true,
+                        Summary = WeeklySummary.Build(TryLoadConfig(), _engine.LoadState(), _engine.Log.ReadAll(), Now, Math.Clamp(req.WeekOffset ?? 0, -52, 0)),
+                    },
                     _ => IpcResponse.Fail($"Unknown request '{req.Command}'."),
                 };
             }
@@ -357,6 +362,7 @@ public sealed class Guard
         if (cfg == null) return dto;
 
         var now = dto.ServerNowUtc;
+        dto.GraceMinutes = _rules.T(cfg).GraceMinutes;
         dto.UnlocksLeftToday = Math.Max(0, cfg.Timings.MaxUnlockRequestsPerDay - _rules.UnlockRequestsToday(state, now));
         if (state.PendingUnlock is { } u)
             dto.Unlock = new UnlockDto

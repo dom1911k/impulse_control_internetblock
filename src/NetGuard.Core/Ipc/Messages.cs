@@ -43,6 +43,7 @@ public static class IpcCommands
     public const string ProgramReapprove = "program-reapprove";
     public const string PracticeStart = "practice-start";
     public const string PracticeEnd = "practice-end";
+    public const string Summary = "summary";
 }
 
 public sealed class IpcRequest
@@ -61,6 +62,8 @@ public sealed class IpcRequest
     public string? Text { get; set; }
     public DateTimeOffset? Until { get; set; }
     public Config.PlayPlan? Plan { get; set; }
+    /// <summary>0 = this week, -1 = last week …</summary>
+    public int? WeekOffset { get; set; }
 }
 
 public sealed class IpcResponse
@@ -72,6 +75,7 @@ public sealed class IpcResponse
     public List<LogEntryDto>? History { get; set; }
     public ConfigDto? Config { get; set; }
     public List<PlanDto>? Plans { get; set; }
+    public Reporting.SummaryDto? Summary { get; set; }
     public ProgramDto? Program { get; set; }
 
     public static IpcResponse Success(string? text = null) => new() { Ok = true, Text = text };
@@ -102,6 +106,8 @@ public sealed class StatusDto
     public List<string> RejectedFiles { get; set; } = new();
     /// <summary>Practice mode is running until then (short waiting times; normal internet afterwards).</summary>
     public DateTimeOffset? PracticeUntilUtc { get; set; }
+    /// <summary>How many extra minutes the grace gives right now (1 in practice mode).</summary>
+    public int GraceMinutes { get; set; }
     public List<ProfileDto> Profiles { get; set; } = new();
 }
 

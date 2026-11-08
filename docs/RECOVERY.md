@@ -4,6 +4,9 @@
 
 NetGuard → **Tools → Emergency restore…** → type your recovery code.
 
+Or: Start menu → **NetGuard Emergency Restore** → type your recovery code. (If the NetGuard
+service is broken, this window asks Windows for administrator rights instead and restores directly.)
+
 Normal internet is back immediately. NetGuard stays installed; it just has no lock to keep.
 
 ## 2. If the NetGuard window doesn't work

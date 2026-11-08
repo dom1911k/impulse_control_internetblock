@@ -74,6 +74,8 @@ Profiles in the default config: Offline, WoW, Maintenance
         }
         if (OperatingSystem.IsWindows()) Updater.CleanupOldFiles();
         if (!OperatingSystem.IsWindows()) { Err("ngctl only runs on Windows."); return 1; }
+        if (args[0].Equals("recover", StringComparison.OrdinalIgnoreCase) && args.Any(x => x.Equals("--pause", StringComparison.OrdinalIgnoreCase)))
+            return EmergencyWindow(args);
         if (!WinEnv.IsElevatedAdmin())
         {
             Err("ngctl must run in an ADMINISTRATOR terminal.");
@@ -318,6 +320,65 @@ Profiles in the default config: Offline, WoW, Maintenance
 
     // ------------------------------------------------------------------ recover
 
+    /// <summary>
+    /// The Start menu's "NetGuard Emergency Restore": asks the running service, with the recovery code
+    /// (no admin rights needed). If the service is broken, it asks Windows for admin rights and restores directly.
+    /// The window stays open so the result can be read.
+    /// </summary>
+    private static int EmergencyWindow(string[] args)
+    {
+        int Done(int rc)
+        {
+            Console.WriteLine();
+            Console.Write("Press Enter to close this window.");
+            Console.ReadLine();
+            return rc;
+        }
+
+        Console.Title = "NetGuard – Emergency restore";
+        Head("NetGuard – Emergency restore");
+        Console.WriteLine("This ends any NetGuard lock right now and brings back normal internet. It is logged.");
+        Console.WriteLine();
+
+        if (ServiceControl.IsRunning())
+        {
+            Console.Write("Recovery code (or just Enter to cancel): ");
+            var code = Console.ReadLine()?.Trim();
+            if (string.IsNullOrEmpty(code)) { Console.WriteLine("Cancelled – nothing was changed."); return Done(0); }
+            try
+            {
+                var r = new GuardClient().SendAsync(new NetGuard.Core.Ipc.IpcRequest { Command = NetGuard.Core.Ipc.IpcCommands.Recover, Code = code })
+                    .GetAwaiter().GetResult();
+                if (!r.Ok) { Err(r.Error ?? "Refused."); return Done(1); }
+                Console.WriteLine(r.Text);
+                Ok("Normal internet restored.");
+                return Done(0);
+            }
+            catch (Exception e)
+            {
+                Err("The service didn't answer: " + e.Message);
+                Console.WriteLine("If this keeps happening, see RECOVERY.md (Start menu → NetGuard - manual recovery steps).");
+                return Done(1);
+            }
+        }
+
+        Warn("The NetGuard service isn't running, so no code is needed – but changing the firewall needs administrator rights.");
+        if (!WinEnv.IsElevatedAdmin())
+        {
+            Console.Write("Press Enter to ask Windows for administrator rights (or close this window): ");
+            Console.ReadLine();
+            try
+            {
+                System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(Environment.ProcessPath!, "recover --pause") { UseShellExecute = true, Verb = "runas" });
+                return 0;
+            }
+            catch (Exception e) { Err("Not started: " + e.Message); return Done(1); }
+        }
+        var engine = new Engine(new ComFirewall(), new AuthenticodeVerifier(), new NetGuardPaths(), HostsFile.DefaultPath);
+        var rc = Recover(engine, new Args(new[] { "recover", "--reason", "emergency restore (service not running)" }));
+        return Done(rc);
+    }
+
     private static int Recover(Engine engine, Args a)
     {
         var fromTask = a.Has("--from-task");
@@ -328,6 +389,12 @@ Profiles in the default config: Offline, WoW, Maintenance
         if (!fromTask && ServiceControl.IsRunning())
         {
             var code = a.Value("--code");
+            if (code == null && !Console.IsInputRedirected && !quiet)
+            {
+                Console.Write("The NetGuard service is running. Recovery code: ");
+                code = Console.ReadLine()?.Trim();
+                if (string.IsNullOrEmpty(code)) code = null;
+            }
             if (code == null)
             {
                 Err("The NetGuard service is running. Emergency restore needs your recovery code:");

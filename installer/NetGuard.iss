@@ -12,6 +12,12 @@ AppName=NetGuard
 AppVersion={#AppVersion}
 AppVerName=NetGuard {#AppVersion}
 AppPublisher=NetGuard
+AppPublisherURL=https://github.com/dom1911k/impulse_control_internetblock
+AppSupportURL=https://github.com/dom1911k/impulse_control_internetblock/blob/main/docs/RECOVERY.md
+AppUpdatesURL=https://github.com/dom1911k/impulse_control_internetblock/releases
+VersionInfoVersion={#AppVersion}
+MinVersion=10.0.17763
+InfoBeforeFile=..\docs\BEFORE-INSTALL.txt
 DefaultDirName={autopf}\NetGuard
 DefaultGroupName=NetGuard
 DisableProgramGroupPage=yes
@@ -37,12 +43,16 @@ Source: "..\publish\NetGuard\*"; DestDir: "{app}"; Flags: ignoreversion
 
 [Icons]
 Name: "{autoprograms}\NetGuard"; Filename: "{app}\NetGuard.exe"
-Name: "{autoprograms}\NetGuard Recovery (manual steps)"; Filename: "{app}\RECOVERY.md"
+Name: "{autoprograms}\NetGuard Emergency Restore"; Filename: "{app}\ngctl.exe"; Parameters: "recover --pause"; Comment: "Ends any NetGuard lock with your recovery code"
+Name: "{autoprograms}\NetGuard - manual recovery steps"; Filename: "{app}\RECOVERY.md"
 Name: "{autodesktop}\NetGuard"; Filename: "{app}\NetGuard.exe"; Tasks: desktopicon
 
 [Registry]
 ; NetGuard's tray icon starts with Windows for every user.
 Root: HKLM; Subkey: "Software\Microsoft\Windows\CurrentVersion\Run"; ValueType: string; ValueName: "NetGuard"; ValueData: """{app}\NetGuard.exe"" --tray"; Flags: uninsdeletevalue
+
+[Messages]
+FinishedLabel=NetGuard is installed and its protection service is running.%n%nOpen NetGuard (it also sits in the tray next to the clock). If this is your first time, the setup wizard walks you through everything, including your recovery code.
 
 [Run]
 ; The protection service: LocalSystem, automatic start, restarts itself if it crashes.
@@ -100,7 +110,7 @@ begin
     '-NoProfile -NonInteractive -ExecutionPolicy Bypass -Command "Stop-Service NetGuard -Force -ErrorAction SilentlyContinue"',
     '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
   // Running as SYSTEM (update started by the service): make sure the service process is gone, and close the
-  // NetGuard window in the user's session – Restart Manager can't close apps in another session.
+  // NetGuard window in the user's session - Restart Manager can't close apps in another session.
   if IsSystemAccount then
     Exec('powershell.exe',
       '-NoProfile -NonInteractive -ExecutionPolicy Bypass -Command "Get-Process NetGuard.Service, NetGuard -ErrorAction SilentlyContinue | Stop-Process -Force; Start-Sleep -Seconds 1"',

@@ -3,9 +3,10 @@
 A self-control internet lock for a Windows gaming PC. It blocks all internet except the programs
 the active profile allows. Daily use is simple, and undoing it in a weak moment is deliberately hard.
 
-> **Status: milestone 4 of 5 – unlock requests, commitments, play-time plans** (on top of the tray app,
-> setup wizard, program editor, protection service, self-healing, self-protection and recovery code).
-> Test steps: [docs/TESTING-M4.md](docs/TESTING-M4.md).
+> **Status: all 5 milestones built** – protection service with self-healing and self-protection,
+> recovery code, tray app, setup wizard, program editor, unlock requests, commitments, play-time
+> plans, practice mode, weekly summary, emergency-restore shortcut, installer.
+> Latest test steps: [docs/TESTING-M5.md](docs/TESTING-M5.md) (and the practice run in [docs/TESTING-M4.md](docs/TESTING-M4.md)).
 > Emergency: [docs/RECOVERY.md](docs/RECOVERY.md).
 >
 > **Download:** [NetGuardSetup.exe](https://github.com/dom1911k/impulse_control_internetblock/releases/latest/download/NetGuardSetup.exe)
@@ -93,8 +94,8 @@ docs/                    TESTING-M1.md, RECOVERY.md
 .github/workflows/       Windows build: tests, both exes, installer, GitHub Release
 ```
 
-Coming next: milestone 5 – recovery shortcut, weekly summary of unlock reasons and play time,
-installer polish.
+Ideas for later (see the conversation history): an "Updates" profile and automatic update window,
+tamper penalties, schedules for stricter profiles, an accountability partner, a hidden admin account.
 
 ## Updating
 

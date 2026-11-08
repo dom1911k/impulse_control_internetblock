@@ -1,0 +1,20 @@
+NetGuard – before you install
+
+NetGuard blocks the internet for everything except the programs the active profile allows
+(for example World of Warcraft, Battle.net and Spotify). Steam is always blocked.
+
+How it holds:
+- A background service (running as SYSTEM) owns the firewall. It repairs any change within
+  seconds and keeps your profile across reboots.
+- While a lock is active, NetGuard also protects itself from administrators: it can't simply
+  be stopped, edited or uninstalled.
+- Stricter is always one click. Looser needs an unlock request: a reason, a 45-minute wait,
+  then retyping a passage – at most twice a day.
+
+Your way out in an emergency:
+- The setup wizard creates a recovery code. Write it on paper and keep it somewhere
+  inconvenient. It ends any lock immediately (Start menu: "NetGuard Emergency Restore").
+- Uninstalling (from inside NetGuard: Tools -> Uninstall NetGuard) always leaves the PC with
+  normal internet.
+
+Nothing is locked right after installing. You decide when to start.

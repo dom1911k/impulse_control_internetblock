@@ -43,13 +43,15 @@ public partial class MainWindow : Window
         PassageInput.CommandBindings.Add(new CommandBinding(ApplicationCommands.Paste, (_, _) => { }, (_, e) => { e.CanExecute = false; e.Handled = true; }));
         PlayTime = new PlayTimePanel(this, _client);
         PlayTab.Content = PlayTime;
+        Summary = new SummaryPanel(_client);
+        SummaryHost.Content = Summary;
         Programs = new ProgramsPanel(this, _client);
         ProgramsTab.Content = Programs;
         Tabs.SelectionChanged += async (_, e) =>
         {
             if (e.Source == Tabs && Tabs.SelectedItem == ProgramsTab) await Programs.RefreshAsync();
             if (e.Source == Tabs && Tabs.SelectedItem == PlayTab) await PlayTime.RefreshAsync();
-            if (e.Source == Tabs && Tabs.SelectedItem == HistoryTab) await LoadHistoryAsync();
+            if (e.Source == Tabs && Tabs.SelectedItem == HistoryTab) { await Summary.RefreshAsync(); await LoadHistoryAsync(); }
         };
         Closing += (_, e) =>
         {
@@ -61,6 +63,7 @@ public partial class MainWindow : Window
 
     public ProgramsPanel Programs { get; }
     public PlayTimePanel PlayTime { get; }
+    public SummaryPanel Summary { get; }
 
     public void AllowClose() { _allowClose = true; Close(); }
 
@@ -214,7 +217,7 @@ public partial class MainWindow : Window
 
     private async void OnGrace(object sender, RoutedEventArgs e)
     {
-        if (MessageBox.Show(this, "Take the extra minutes? This is possible once a day, and they come off tomorrow's play time.",
+        if (MessageBox.Show(this, $"Take {_status?.GraceMinutes} more minutes? This is possible once a day, and they come off tomorrow's play time.",
                 "Extra minutes", MessageBoxButton.OKCancel, MessageBoxImage.Question) != MessageBoxResult.OK) return;
         await RunAsync("Extra minutes", new IpcRequest { Command = IpcCommands.Grace });
     }
@@ -290,6 +293,7 @@ public partial class MainWindow : Window
         var activePlay = _status.Profiles.FirstOrDefault(x => x.IsActive)?.Play;
         PlayPanel.Visibility = _status.TestDeadlineUtc == null && activePlay is { Allowed: true, EndsUtc: not null } ? Visibility.Visible : Visibility.Collapsed;
         GraceButton.Visibility = activePlay?.GraceAvailable == true ? Visibility.Visible : Visibility.Collapsed;
+        GraceButton.Content = $"+{_status.GraceMinutes} min (once today)";
         PlayLabel.Text = activePlay?.GraceActive == true ? "Extra minutes left" : "Play time left";
 
         CommitText.Text = _status.CommitmentUntilUtc is { } cut
@@ -467,7 +471,11 @@ public partial class MainWindow : Window
 
     // ---------- history
 
-    private async void OnRefreshHistory(object sender, RoutedEventArgs e) => await LoadHistoryAsync();
+    private async void OnRefreshHistory(object sender, RoutedEventArgs e)
+    {
+        await Summary.RefreshAsync();
+        await LoadHistoryAsync();
+    }
 
     private async Task LoadHistoryAsync()
     {
