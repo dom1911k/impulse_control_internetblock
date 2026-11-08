@@ -277,4 +277,29 @@ public static class Dialogs
         var until = date.SelectedDate!.Value.Date.AddHours(int.Parse(parts[0])).AddMinutes(int.Parse(parts[1]));
         return ((string)profiles.SelectedItem!, until);
     }
+
+    /// <summary>A longer text (status, preview, blocked programs) in its own window.</summary>
+    public static void ShowText(Window owner, string title, string text)
+    {
+        var w = NewWindow(owner, title, 760);
+        w.SizeToContent = SizeToContent.Manual;
+        w.Height = 560;
+        w.ResizeMode = ResizeMode.CanResize;
+        var box = new TextBox
+        {
+            Text = text, IsReadOnly = true, FontFamily = new FontFamily("Consolas"), FontSize = 12.5, TextWrapping = TextWrapping.NoWrap,
+            VerticalScrollBarVisibility = ScrollBarVisibility.Auto, HorizontalScrollBarVisibility = ScrollBarVisibility.Auto,
+            Padding = new Thickness(10), BorderThickness = new Thickness(0), Background = new SolidColorBrush(Color.FromRgb(0xFA, 0xFB, 0xFC)),
+        };
+        var close = Btn("Close", true, w);
+        close.IsCancel = close.IsDefault = true;
+        close.HorizontalAlignment = HorizontalAlignment.Right;
+        close.Margin = new Thickness(0, 10, 0, 0);
+        var dock = new DockPanel { Margin = new Thickness(16) };
+        DockPanel.SetDock(close, Dock.Bottom);
+        dock.Children.Add(close);
+        dock.Children.Add(box);
+        w.Content = dock;
+        w.ShowDialog();
+    }
 }

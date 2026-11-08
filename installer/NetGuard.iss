@@ -65,7 +65,7 @@ Filename: "{sys}\sc.exe"; Parameters: "start NetGuard"; Flags: runhidden waitunt
 Filename: "{app}\NetGuard.exe"; Description: "Start NetGuard now"; Flags: nowait postinstall skipifsilent runasoriginaluser
 Filename: "{app}\NetGuard.exe"; Flags: nowait runasoriginaluser; Check: ShouldStartAppSilently
 
-; Uninstalling must always leave the PC with normal internet. NetGuard -> Tools -> Uninstall has already
+; Uninstalling must always leave the PC with normal internet. NetGuard -> Settings -> Uninstall has already
 ; restored internet and stopped the service; these steps make sure of it:
 ; 1) NetGuard's own recovery, 2) the plain PowerShell fallback in case (1) failed, 3) remove the service.
 [UninstallRun]
@@ -117,8 +117,8 @@ begin
       '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
   if ServiceRunning then
     Result := 'A NetGuard lock is active and NetGuard protects itself, so this installer can''t replace it.' + #13#10#13#10 +
-              'To update: open NetGuard -> Tools -> Check for updates -> Install update.' + #13#10 +
-              'To remove it: open NetGuard -> Tools -> Uninstall NetGuard.'
+              'To update: open NetGuard -> Settings -> Check for updates -> Install update.' + #13#10 +
+              'To remove it: open NetGuard -> Settings -> Advanced -> Uninstall NetGuard.'
   else
     Result := '';
 end;
@@ -135,7 +135,7 @@ begin
   if ServiceRunning then
   begin
     MsgBox('A NetGuard lock is active and NetGuard protects itself. It can only be removed from inside the app:' + #13#10#13#10 +
-           'open NetGuard -> Tools -> Uninstall NetGuard (needs your recovery code during a lock).', mbInformation, MB_OK);
+           'open NetGuard -> Settings -> Advanced -> Uninstall NetGuard (needs your recovery code during a lock).', mbInformation, MB_OK);
     Result := False;
   end;
 end;

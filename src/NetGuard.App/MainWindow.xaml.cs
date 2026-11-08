@@ -22,6 +22,7 @@ public partial class MainWindow : Window
     private readonly GuardClient _client = new();
     private readonly StatusMonitor _monitor;
     private readonly DispatcherTimer _timer = new() { Interval = TimeSpan.FromSeconds(1) };
+    private readonly DispatcherTimer _messageTimer = new() { Interval = TimeSpan.FromSeconds(10) };
     private StatusDto? _status;
     private bool _serviceDown;
     private string _serviceProblem = "";
@@ -29,29 +30,44 @@ public partial class MainWindow : Window
     private bool _allowClose;
     private ReleaseInfo? _latest;
     private string _cardsSignature = "";
+    private DateTime _statsLoaded = DateTime.MinValue;
+
+    public ProgramsPanel Programs { get; }
+    public PlayTimePanel PlayTime { get; }
+    public SummaryPanel Summary { get; }
+    public StatsPanel Stats { get; }
 
     public MainWindow(StatusMonitor monitor)
     {
         _monitor = monitor;
         InitializeComponent();
         VersionText.Text = $"Installed version: {GitHubReleases.CurrentVersion}";
-        _timer.Tick += OnTick;
-        Loaded += OnLoaded;
-        _monitor.Changed += OnStatusChanged;
-        // The passage has to be typed: no pasting, no dropping.
-        DataObject.AddPastingHandler(PassageInput, (_, e) => e.CancelCommand());
-        PassageInput.CommandBindings.Add(new CommandBinding(ApplicationCommands.Paste, (_, _) => { }, (_, e) => { e.CanExecute = false; e.Handled = true; }));
-        PlayTime = new PlayTimePanel(this, _client);
+
+        Programs = new ProgramsPanel(this, _client);
+        ProgramsTab.Content = Programs;
+        PlayTime = new PlayTimePanel(this, _client, () => _status);
         PlayTab.Content = PlayTime;
         Summary = new SummaryPanel(_client);
         SummaryHost.Content = Summary;
-        Programs = new ProgramsPanel(this, _client);
-        ProgramsTab.Content = Programs;
+        Stats = new StatsPanel(_client);
+        StatsHost.Content = Stats;
+
+        // The passage has to be typed: no pasting, no dropping.
+        DataObject.AddPastingHandler(PassageInput, (_, e) => e.CancelCommand());
+        PassageInput.CommandBindings.Add(new CommandBinding(ApplicationCommands.Paste, (_, _) => { }, (_, e) => { e.CanExecute = false; e.Handled = true; }));
+
+        _timer.Tick += OnTick;
+        _messageTimer.Tick += (_, _) => { _messageTimer.Stop(); MessageBar.Visibility = Visibility.Collapsed; };
+        _monitor.Changed += OnStatusChanged;
+        Loaded += OnLoaded;
+
         Tabs.SelectionChanged += async (_, e) =>
         {
-            if (e.Source == Tabs && Tabs.SelectedItem == ProgramsTab) await Programs.RefreshAsync();
-            if (e.Source == Tabs && Tabs.SelectedItem == PlayTab) await PlayTime.RefreshAsync();
-            if (e.Source == Tabs && Tabs.SelectedItem == HistoryTab) { await Summary.RefreshAsync(); await LoadHistoryAsync(); }
+            if (e.Source != Tabs) return;
+            if (Tabs.SelectedItem == HomeTab) await Stats.RefreshAsync();
+            else if (Tabs.SelectedItem == ProgramsTab) await Programs.RefreshAsync();
+            else if (Tabs.SelectedItem == PlayTab) await PlayTime.RefreshAsync();
+            else if (Tabs.SelectedItem == HistoryTab) { await Summary.RefreshAsync(); await LoadHistoryAsync(); }
         };
         Closing += (_, e) =>
         {
@@ -61,21 +77,26 @@ public partial class MainWindow : Window
         };
     }
 
-    public ProgramsPanel Programs { get; }
-    public PlayTimePanel PlayTime { get; }
-    public SummaryPanel Summary { get; }
-
     public void AllowClose() { _allowClose = true; Close(); }
 
     public void OpenWizard()
     {
         if (!IsVisible) Show();
-        var w = new WizardWindow(this, _client, _monitor);
-        w.ShowDialog();
+        new WizardWindow(this, _client, _monitor).ShowDialog();
         _ = _monitor.RefreshAsync();
     }
 
-    private void OnRunWizard(object sender, RoutedEventArgs e) => OpenWizard();
+    // ================================================================ lifecycle / status
+
+    private async void OnLoaded(object sender, RoutedEventArgs e)
+    {
+        OnStatusChanged();
+        _timer.Start();
+        await Stats.RefreshAsync();
+        _statsLoaded = DateTime.UtcNow;
+        if (_status != null && (!_status.ConfigExists || !_status.RecoveryCodeExists))
+            ShowMessage("Welcome to NetGuard. First time here? Settings → Run setup wizard.", ok: true, sticky: true);
+    }
 
     private void OnStatusChanged()
     {
@@ -85,34 +106,120 @@ public partial class MainWindow : Window
         ApplyStatus();
     }
 
-    // ================================================================ lifecycle / status
-
-    private async void OnLoaded(object sender, RoutedEventArgs e)
-    {
-        OnStatusChanged();
-        await LoadHistoryAsync();
-        _timer.Start();
-        Output.Text = _serviceDown
-            ? "The NetGuard protection service isn't running.\n\nInstall or repair NetGuard with NetGuardSetup.exe, or Tools → Start protection service."
-            : _status?.ConfigExists == false || _status?.RecoveryCodeExists == false
-                ? "Welcome to NetGuard.\n\nFirst time here? Setup → Run setup wizard."
-                : "Welcome to NetGuard.\n\nSwitch to a profile, start a test lock, or use Preview to see exactly what would change.";
-    }
-
-    private void OnTick(object? sender, EventArgs e)
+    private async void OnTick(object? sender, EventArgs e)
     {
         if (_status?.TestDeadlineUtc is { } deadline)
-        {
-            var left = deadline - DateTimeOffset.UtcNow;
-            CountdownText.Text = left > TimeSpan.Zero ? left.ToString(@"mm\:ss") : "00:00";
-        }
+            CountdownText.Text = TimeLeft(deadline - DateTimeOffset.UtcNow);
         if (_status?.Profiles.FirstOrDefault(x => x.IsActive)?.Play is { EndsUtc: { } pe })
             PlayLeftText.Text = TimeLeft(pe - ServerNow);
         UpdateUnlockPanel();
+        if (IsVisible && Tabs.SelectedItem == HomeTab && DateTime.UtcNow - _statsLoaded > TimeSpan.FromMinutes(1))
+        {
+            _statsLoaded = DateTime.UtcNow;
+            await Stats.RefreshAsync();
+        }
     }
+
+    private Task RefreshStatusAsync() => _monitor.RefreshAsync();
 
     /// <summary>NetGuard's trusted time (the PC clock may have been changed).</summary>
     private DateTimeOffset ServerNow => DateTimeOffset.UtcNow + _monitor.ServerOffset;
+
+    private void ApplyStatus()
+    {
+        if (_serviceDown || _status == null)
+        {
+            var running = SafeServiceState().StartsWith("running");
+            StatusTitle.Text = running ? "Can't reach the protection service" : "Protection service isn't running";
+            StatusDetail.Text = running
+                ? $"{_serviceProblem} Please send a screenshot of this to whoever helps you with NetGuard."
+                : "NetGuard can't enforce or repair anything right now. Run NetGuardSetup.exe to install or repair it.";
+            Banner.Background = Brush("#7A2E2E");
+            CountdownPanel.Visibility = PlayPanel.Visibility = UnlockPanel.Visibility = PracticeStripe.Visibility = Visibility.Collapsed;
+            ServiceText.Text = $"Service: {SafeServiceState()}.";
+            StartServiceButton.Visibility = Visibility.Visible;
+            BuildProfileCards(null);
+            return;
+        }
+        var s = _status;
+
+        // ---- settings
+        ServiceText.Text = $"Running (version {s.ServiceVersion}), self-protection {(s.SelfProtectionActive ? "on" : "on standby until a lock starts")}. " +
+                           $"Last check {s.LastCheckUtc?.ToLocalTime():T}." +
+                           (s.LastTamperUtc is { } t ? $" Last repair of a change: {t.ToLocalTime():g}." : "");
+        StartServiceButton.Visibility = Visibility.Collapsed;
+        RecoveryStateText.Text = s.RecoveryCodeExists
+            ? $"✓ Recovery code created {s.RecoveryCodeCreatedUtc?.ToLocalTime():d}."
+            : "No recovery code yet – locks can't start until you create one.";
+        RecoveryButton.Content = s.RecoveryCodeExists ? "Replace recovery code…" : "Create recovery code";
+        RecoveryButton.IsEnabled = s.ActiveProfile == null;
+        PracticeStartButton.IsEnabled = s.PracticeUntilUtc == null && s.ActiveProfile == null && s.RecoveryCodeExists;
+        PracticeEndButton.IsEnabled = s.PracticeUntilUtc != null;
+        var testable = s.Profiles.Where(p => p.TestAllowed).Select(p => p.Name).ToList();
+        if (!TestProfileBox.Items.Cast<string>().SequenceEqual(testable))
+        {
+            var keep = TestProfileBox.SelectedItem as string;
+            TestProfileBox.ItemsSource = testable;
+            TestProfileBox.SelectedItem = testable.Contains(keep ?? "") ? keep : testable.FirstOrDefault();
+        }
+        TestLockButton.IsEnabled = testable.Count > 0;
+        TestLockButton.ToolTip = testable.Count > 0 ? null : "Only possible with normal internet.";
+
+        // ---- banner
+        var profile = s.ActiveProfile;
+        var active = s.Profiles.FirstOrDefault(x => x.IsActive);
+        if (profile == null)
+        {
+            StatusTitle.Text = "Normal internet";
+            StatusDetail.Text = !s.ConfigExists || !s.RecoveryCodeExists ? "NetGuard isn't fully set up yet – see Settings." : "No profile is active.";
+            Banner.Background = Brush("#2E3A46");
+        }
+        else
+        {
+            StatusTitle.Text = $"{profile} mode" + (s.CommitmentUntilUtc is { } cu ? $" – committed until {Fmt(cu)}" : "");
+            StatusDetail.Text = s.TestDeadlineUtc is { } d
+                ? $"Test lock – normal internet comes back by itself at {d.ToLocalTime():T}."
+                : s.MaintenanceUntilUtc is { } mu
+                    ? $"Maintenance until {Fmt(mu)}, then back to your previous profile."
+                    : active?.Play is { Allowed: true, EndsUtc: { } pe }
+                        ? $"Play time until {Fmt(pe)}. Then NetGuard switches to Offline."
+                        : $"Since {Fmt(s.ActiveSinceUtc ?? DateTimeOffset.UtcNow)}. NetGuard keeps it in place.";
+            Banner.Background = Brush(Theme.ProfileColor(profile));
+        }
+        CountdownPanel.Visibility = s.TestDeadlineUtc != null ? Visibility.Visible : Visibility.Collapsed;
+        var play = active?.Play;
+        PlayPanel.Visibility = s.TestDeadlineUtc == null && play is { Allowed: true, EndsUtc: not null } ? Visibility.Visible : Visibility.Collapsed;
+        GraceButton.Visibility = play?.GraceAvailable == true ? Visibility.Visible : Visibility.Collapsed;
+        GraceButton.Content = $"+{s.GraceMinutes} min (once today)";
+        PlayLabel.Text = play?.GraceActive == true ? "Extra minutes left" : "Play time left";
+
+        PracticeStripe.Visibility = s.PracticeUntilUtc != null ? Visibility.Visible : Visibility.Collapsed;
+        PracticeStripeText.Text = s.PracticeUntilUtc is { } pu
+            ? $"🧪 PRACTICE MODE until {Fmt(pu)} – waiting times are short and nothing counts. Afterwards normal internet comes back by itself."
+            : "";
+
+        // ---- home
+        CommitText.Text = s.CommitmentUntilUtc is { } cut ? $"Committed to {s.CommitmentProfile} until {Fmt(cut)}" : "";
+        CommitButton.IsEnabled = s.RecoveryCodeExists && s.ConfigExists;
+
+        var notices = new List<string>();
+        notices.AddRange(s.RejectedFiles.Select(r => "⚠ Blocked because it changed or isn't genuine: " + r +
+                                                     ". If it's a normal update: Programs → Re-approve (with normal internet or in Maintenance)."));
+        if (s.MaintenanceReminder)
+            notices.Add("🛠 No Maintenance for a while – Windows and Defender haven't been able to update. Consider a Maintenance unlock soon.");
+        NoticeText.Text = string.Join("\n", notices);
+        NoticeText.Visibility = notices.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
+
+        UpdateUnlockPanel();
+        BuildProfileCards(s);
+    }
+
+    private static string SafeServiceState()
+    {
+        try { return ServiceControl.Describe(); } catch { return "unknown"; }
+    }
+
+    private static SolidColorBrush Brush(string hex) => new((Color)ColorConverter.ConvertFromString(hex));
 
     private static string TimeLeft(TimeSpan t)
     {
@@ -130,12 +237,152 @@ public partial class MainWindow : Window
 
     private static string PlayLine(PlayDto p)
     {
-        var parts = new List<string>();
-        parts.Add(p.Allowed ? $"🎮 Play time now{(p.EndsUtc is { } e ? $" until {Fmt(e)}" : "")}" : "⏸ " + p.Reason);
-        if (p.DailyLimitMinutes is { } d) parts.Add($"today {Mins(p.UsedTodayMinutes)} of {Mins(d)}");
-        if (p.WeeklyLimitMinutes is { } w) parts.Add($"this week {Mins(p.UsedWeekMinutes)} of {Mins(w)}");
+        var parts = new List<string>
+        {
+            p.Allowed ? $"🎮 Play time{(p.EndsUtc is { } e ? $" until {Fmt(e)}" : "")}" : "⏸ " + p.Reason,
+        };
+        if (p.DailyLimitMinutes is { } d) parts.Add($"today {Mins(p.UsedTodayMinutes)} / {Mins(d)}");
+        if (p.WeeklyLimitMinutes is { } w) parts.Add($"week {Mins(p.UsedWeekMinutes)} / {Mins(w)}");
         return string.Join(" · ", parts);
     }
+
+    // ================================================================ messages
+
+    private void ShowMessage(string text, bool ok, bool sticky = false)
+    {
+        MessageText.Text = text;
+        MessageBar.Background = Brush(ok ? "#E8F3F0" : "#FBE9E7");
+        MessageText.Foreground = Brush(ok ? "#24584C" : "#8C2B1E");
+        MessageBar.Visibility = Visibility.Visible;
+        _messageTimer.Stop();
+        if (ok && !sticky) _messageTimer.Start();
+    }
+
+    private void OnCloseMessage(object sender, RoutedEventArgs e) => MessageBar.Visibility = Visibility.Collapsed;
+
+    // ================================================================ profile cards
+
+    private void BuildProfileCards(StatusDto? status)
+    {
+        var sig = status == null ? "down" :
+            string.Join("|", status.Profiles.Select(p => $"{p.Name}{p.IsActive}{p.SwitchAllowed}{p.SwitchHint}{p.UnlockAllowed}{p.UnlockHint}" +
+                                                    (p.Play == null ? "" : PlayLine(p.Play)))) + status.ConfigExists + status.UnlocksLeftToday;
+        if (sig == _cardsSignature) return;
+        _cardsSignature = sig;
+
+        ProfileCards.Children.Clear();
+        if (status == null) { NoConfigHint.Visibility = Visibility.Collapsed; return; }
+        NoConfigHint.Visibility = status.ConfigExists ? Visibility.Collapsed : Visibility.Visible;
+
+        foreach (var p in status.Profiles)
+        {
+            var stack = new StackPanel();
+            stack.Children.Add(new Border { Height = 5, CornerRadius = new CornerRadius(3), Background = Brush(Theme.ProfileColor(p.Name)), Margin = new Thickness(0, 0, 0, 12) });
+
+            var titleRow = new DockPanel();
+            if (p.IsActive)
+            {
+                var badge = new TextBlock
+                {
+                    Text = "ACTIVE", FontSize = 11, FontWeight = FontWeights.Bold, Foreground = Brushes.White,
+                    Background = Brush(Theme.ProfileColor(p.Name)), Padding = new Thickness(6, 2, 6, 2), VerticalAlignment = VerticalAlignment.Center,
+                };
+                DockPanel.SetDock(badge, Dock.Right);
+                titleRow.Children.Add(badge);
+            }
+            titleRow.Children.Add(new TextBlock { Text = p.Name, Style = (Style)FindResource("H2") });
+            stack.Children.Add(titleRow);
+            stack.Children.Add(new TextBlock { Text = p.Description, Style = (Style)FindResource("Body"), MinHeight = 44 });
+
+            var name = p.Name;
+            var needsUnlock = !p.IsActive && !p.SwitchAllowed && p.UnlockAllowed;
+            var btn = new Button
+            {
+                Content = p.IsActive ? "Active" : needsUnlock ? "Request unlock…" : $"Switch to {p.Name}",
+                Style = (Style)FindResource(needsUnlock ? "Secondary" : "Primary"),
+                IsEnabled = !p.IsActive && (p.SwitchAllowed || p.UnlockAllowed),
+                HorizontalAlignment = HorizontalAlignment.Left,
+            };
+            btn.Click += async (_, _) => { if (needsUnlock) await RequestUnlockAsync(name); else await SwitchAsync(name); };
+            stack.Children.Add(btn);
+
+            if (p.Play is { } play)
+                stack.Children.Add(new TextBlock
+                {
+                    Text = PlayLine(play), FontSize = 12, TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 4, 0, 0),
+                    Foreground = Brush(play.Allowed ? "#2E7D6B" : "#5F6B7A"),
+                });
+            if (!p.IsActive && !p.SwitchAllowed)
+                stack.Children.Add(new TextBlock
+                {
+                    Text = p.UnlockAllowed ? $"Looser than now – needs an unlock request ({status.UnlocksLeftToday} left today)." : (p.UnlockHint.Length > 0 ? p.UnlockHint : p.SwitchHint),
+                    FontSize = 12, TextWrapping = TextWrapping.Wrap, Foreground = Brush("#5F6B7A"), Margin = new Thickness(0, 4, 0, 0),
+                });
+
+            ProfileCards.Children.Add(new Border { Style = (Style)FindResource("Card"), Child = stack });
+        }
+    }
+
+    // ================================================================ running requests
+
+    private enum ResultView { Message, Dialog }
+
+    /// <summary>Send a request to the service; show the answer in the message bar (or a window for long texts).</summary>
+    private async Task<IpcResponse?> RunAsync(string title, IpcRequest request, ResultView show = ResultView.Message)
+    {
+        if (_busy) return null;
+        _busy = true;
+        Mouse.OverrideCursor = Cursors.Wait;
+        try
+        {
+            var r = await _client.SendAsync(request);
+            if (!r.Ok) ShowMessage(r.Error ?? "That didn't work.", ok: false);
+            else if (show == ResultView.Dialog) Dialogs.ShowText(this, title, r.Text ?? "");
+            else ShowMessage(FirstParagraph(r.Text) ?? $"{title}: done.", ok: true);
+            return r;
+        }
+        catch (Exception e)
+        {
+            ShowMessage($"{title} – didn't work: {e.Message}", ok: false);
+            return null;
+        }
+        finally
+        {
+            Mouse.OverrideCursor = null;
+            _busy = false;
+            _cardsSignature = "";
+            await RefreshStatusAsync();
+            _ = Stats.RefreshAsync();
+        }
+    }
+
+    private static string? FirstParagraph(string? text) =>
+        string.IsNullOrWhiteSpace(text) ? null : text.Replace("\r", "").Split("\n\n")[0].Trim();
+
+    private async Task SwitchAsync(string profile)
+    {
+        var p = _status?.Profiles.FirstOrDefault(x => x.Name == profile);
+        if (p == null) return;
+        var msg = $"Switch to {p.Name} now?\n\n{p.Description}\n\n" +
+                  (p.Play != null
+                      ? "Play time counts while this profile is active. When it's over, NetGuard switches to Offline by itself."
+                      : "Stricter profiles are always one click away; looser ones need an unlock request.");
+        if (MessageBox.Show(this, msg, "Switch profile", MessageBoxButton.OKCancel, MessageBoxImage.Question) != MessageBoxResult.OK) return;
+        await RunAsync($"Switch to {p.Name}", new IpcRequest { Command = IpcCommands.Switch, Profile = profile });
+    }
+
+    private async void OnStartTestLock(object sender, RoutedEventArgs e)
+    {
+        if (TestProfileBox.SelectedItem is not string profile) return;
+        var minutes = int.Parse((string)((ComboBoxItem)MinutesBox.SelectedItem).Tag);
+        if (MessageBox.Show(this, $"Start a {minutes}-minute {profile} test lock?\n\nIt ends by itself (or with \"End test lock now\" in the banner).",
+                "Test lock", MessageBoxButton.OKCancel, MessageBoxImage.Question) != MessageBoxResult.OK) return;
+        await RunAsync($"Test lock: {profile}", new IpcRequest { Command = IpcCommands.TestStart, Profile = profile, Minutes = minutes });
+        Tabs.SelectedItem = HomeTab;
+    }
+
+    private async void OnRestoreNow(object sender, RoutedEventArgs e) =>
+        await RunAsync("End test lock", new IpcRequest { Command = IpcCommands.TestEnd });
 
     // ================================================================ unlock requests
 
@@ -155,9 +402,8 @@ public partial class MainWindow : Window
         if (now < u.ReadyUtc)
         {
             UnlockTitle.Text = $"Unlock to {u.TargetProfile} – waiting {TimeLeft(u.ReadyUtc - now)}";
-            UnlockInfo.Text = $"Your reason: \"{u.Reason}\"\n\nThe waiting time can't be shortened. When it's over you'll have " +
-                              $"{(u.ExpiresUtc - u.ReadyUtc).TotalMinutes:0} minutes to confirm by retyping a passage. If you don't, the request simply expires. " +
-                              "You can also cancel it – it still counts as one of today's requests.";
+            UnlockInfo.Text = $"Your reason: \"{u.Reason}\"\n\nThe waiting time can't be shortened. Then you'll have " +
+                              $"{(u.ExpiresUtc - u.ReadyUtc).TotalMinutes:0} minutes to confirm by retyping a passage – or just let it expire.";
             ConfirmArea.Visibility = Visibility.Collapsed;
             ConfirmUnlockButton.Visibility = Visibility.Collapsed;
         }
@@ -206,15 +452,6 @@ public partial class MainWindow : Window
         await RunAsync("Cancel unlock", new IpcRequest { Command = IpcCommands.UnlockCancel });
     }
 
-    private async void OnPracticeStart(object sender, RoutedEventArgs e)
-    {
-        if (await RunAsync("Practice mode", new IpcRequest { Command = IpcCommands.PracticeStart, Minutes = 30 }) is { Ok: true })
-            Tabs.SelectedIndex = 0; // back to Profiles to try things out
-    }
-
-    private async void OnPracticeEnd(object sender, RoutedEventArgs e) =>
-        await RunAsync("End practice mode", new IpcRequest { Command = IpcCommands.PracticeEnd });
-
     private async void OnGrace(object sender, RoutedEventArgs e)
     {
         if (MessageBox.Show(this, $"Take {_status?.GraceMinutes} more minutes? This is possible once a day, and they come off tomorrow's play time.",
@@ -234,279 +471,18 @@ public partial class MainWindow : Window
         await RunAsync("Commit", new IpcRequest { Command = IpcCommands.Commit, Profile = profile, Until = new DateTimeOffset(until) });
     }
 
-    private Task RefreshStatusAsync() => _monitor.RefreshAsync();
+    // ================================================================ settings
 
-    private void ApplyStatus()
+    private void OnRunWizard(object sender, RoutedEventArgs e) => OpenWizard();
+
+    private async void OnPracticeStart(object sender, RoutedEventArgs e)
     {
-        if (_serviceDown || _status == null)
-        {
-            var running = SafeServiceState().StartsWith("running");
-            StatusTitle.Text = running ? "Can't reach the protection service" : "Protection service isn't running";
-            StatusDetail.Text = running
-                ? $"{_serviceProblem} Please send a screenshot of this to whoever helps you with NetGuard."
-                : "NetGuard can't enforce or repair anything right now. Run NetGuardSetup.exe to install or repair it.";
-            Banner.Background = Brush("#7A2E2E");
-            CountdownPanel.Visibility = Visibility.Collapsed;
-            PlayPanel.Visibility = Visibility.Collapsed;
-            UnlockPanel.Visibility = Visibility.Collapsed;
-            ServiceText.Text = $"Service: {SafeServiceState()}.";
-            StartServiceButton.Visibility = Visibility.Visible;
-            BuildProfileCards(null);
-            return;
-        }
-
-        ServiceText.Text = $"Running (version {_status.ServiceVersion}), self-protection {(_status.SelfProtectionActive ? "on" : "on standby until a lock starts")}. " +
-                           $"Last check {_status.LastCheckUtc?.ToLocalTime():T}." +
-                           (_status.LastTamperUtc is { } t ? $"\nLast repair of a change: {t.ToLocalTime():g}." : "");
-        RecoveryStateText.Text = _status.RecoveryCodeExists
-            ? $"✓ You have a recovery code (created {_status.RecoveryCodeCreatedUtc?.ToLocalTime():g})."
-            : "No recovery code yet – locks can't be started until you create one.";
-        RecoveryButton.Content = _status.RecoveryCodeExists ? "Replace recovery code…" : "Create recovery code";
-        RecoveryButton.IsEnabled = _status.ActiveProfile == null;
-        RecoveryButton.ToolTip = _status.ActiveProfile == null ? null : "Only possible with normal internet.";
-        StartServiceButton.Visibility = Visibility.Collapsed;
-
-        var profile = _status.ActiveProfile;
-        if (profile == null)
-        {
-            StatusTitle.Text = "Normal internet";
-            StatusDetail.Text = !_status.ConfigExists || !_status.RecoveryCodeExists
-                ? "NetGuard isn't fully set up yet – see the Setup tab."
-                : "No profile is active.";
-            Banner.Background = Brush("#2E3A46");
-            ProfileCards.Opacity = 1;
-        }
-        else
-        {
-            StatusTitle.Text = $"{profile} mode" + (_status.CommitmentUntilUtc is { } cu ? $" – committed until {Fmt(cu)}" : "");
-            var active = _status.Profiles.FirstOrDefault(x => x.IsActive);
-            StatusDetail.Text = _status.TestDeadlineUtc is { } d
-                ? $"Test lock – normal internet comes back by itself at {d.ToLocalTime():T}."
-                : _status.MaintenanceUntilUtc is { } mu
-                    ? $"Maintenance until {Fmt(mu)}, then back to your previous profile."
-                    : active?.Play is { Allowed: true, EndsUtc: { } pe }
-                        ? $"Play time until {Fmt(pe)}. Then NetGuard switches to Offline."
-                        : $"Active since {_status.ActiveSinceUtc?.ToLocalTime():g}. NetGuard keeps it in place and repairs any change.";
-            Banner.Background = Brush(Theme.ProfileColor(profile));
-        }
-        CountdownPanel.Visibility = _status.TestDeadlineUtc != null ? Visibility.Visible : Visibility.Collapsed;
-        var activePlay = _status.Profiles.FirstOrDefault(x => x.IsActive)?.Play;
-        PlayPanel.Visibility = _status.TestDeadlineUtc == null && activePlay is { Allowed: true, EndsUtc: not null } ? Visibility.Visible : Visibility.Collapsed;
-        GraceButton.Visibility = activePlay?.GraceAvailable == true ? Visibility.Visible : Visibility.Collapsed;
-        GraceButton.Content = $"+{_status.GraceMinutes} min (once today)";
-        PlayLabel.Text = activePlay?.GraceActive == true ? "Extra minutes left" : "Play time left";
-
-        CommitText.Text = _status.CommitmentUntilUtc is { } cut
-            ? $"Committed to {_status.CommitmentProfile} until {Fmt(cut)}."
-            : _status.ActiveProfile == null ? "" : "No commitment.";
-        CommitButton.IsEnabled = _status.RecoveryCodeExists && _status.ConfigExists;
-
-        var notices = new List<string>();
-        notices.AddRange(_status.RejectedFiles.Select(r => "⚠ Blocked because it changed or isn't genuine: " + r +
-                                                           ". If it's a normal update: Programs → Re-approve (with normal internet or in Maintenance)."));
-        if (_status.MaintenanceReminder)
-            notices.Add($"🛠 No Maintenance for a while – Windows and Defender haven't been able to update. Consider a Maintenance unlock soon.");
-        NoticeText.Text = string.Join("\n", notices);
-        NoticeText.Visibility = notices.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
-
-        PracticeStripe.Visibility = _status.PracticeUntilUtc != null ? Visibility.Visible : Visibility.Collapsed;
-        PracticeStripeText.Text = _status.PracticeUntilUtc is { } pu
-            ? $"🧪 PRACTICE MODE until {Fmt(pu)} – all waiting times are short and nothing counts. Afterwards normal internet comes back by itself."
-            : "";
-        PracticeStartButton.IsEnabled = _status.PracticeUntilUtc == null && _status.ActiveProfile == null && _status.RecoveryCodeExists;
-        PracticeStartButton.ToolTip = PracticeStartButton.IsEnabled ? null : "Only with normal internet, and with a recovery code.";
-        PracticeEndButton.IsEnabled = _status.PracticeUntilUtc != null;
-
-        UpdateUnlockPanel();
-        BuildProfileCards(_status);
+        if (await RunAsync("Practice mode", new IpcRequest { Command = IpcCommands.PracticeStart, Minutes = 30 }) is { Ok: true })
+            Tabs.SelectedItem = HomeTab;
     }
 
-    private static string SafeServiceState()
-    {
-        try { return ServiceControl.Describe(); } catch { return "unknown"; }
-    }
-
-    private static SolidColorBrush Brush(string hex) => new((Color)ColorConverter.ConvertFromString(hex));
-
-    // ================================================================ profile cards
-
-    private void BuildProfileCards(StatusDto? status)
-    {
-        // Only rebuild when something visible changed (keeps buttons from flickering every 3 s).
-        var sig = status == null ? "down" :
-            string.Join("|", status.Profiles.Select(p => $"{p.Name}{p.IsActive}{p.SwitchAllowed}{p.TestAllowed}{p.SwitchHint}{p.UnlockAllowed}{p.UnlockHint}" +
-                                                    (p.Play == null ? "" : PlayLine(p.Play)))) + status.ConfigExists + status.UnlocksLeftToday;
-        if (sig == _cardsSignature) return;
-        _cardsSignature = sig;
-
-        ProfileCards.Children.Clear();
-        if (status == null) { NoConfigHint.Visibility = Visibility.Collapsed; return; }
-        NoConfigHint.Visibility = status.ConfigExists ? Visibility.Collapsed : Visibility.Visible;
-
-        foreach (var p in status.Profiles)
-        {
-            var stack = new StackPanel();
-            stack.Children.Add(new Border { Height = 5, CornerRadius = new CornerRadius(3), Background = Brush(Theme.ProfileColor(p.Name)), Margin = new Thickness(0, 0, 0, 12) });
-
-            var titleRow = new DockPanel();
-            if (p.IsActive)
-            {
-                var badge = new TextBlock
-                {
-                    Text = "ACTIVE", FontSize = 11, FontWeight = FontWeights.Bold, Foreground = Brushes.White,
-                    Background = Brush(Theme.ProfileColor(p.Name)), Padding = new Thickness(6, 2, 6, 2), VerticalAlignment = VerticalAlignment.Center,
-                };
-                DockPanel.SetDock(badge, Dock.Right);
-                titleRow.Children.Add(badge);
-            }
-            titleRow.Children.Add(new TextBlock { Text = p.Name, Style = (Style)FindResource("H2") });
-            stack.Children.Add(titleRow);
-            stack.Children.Add(new TextBlock { Text = p.Description, Style = (Style)FindResource("Body"), MinHeight = 60 });
-
-            var name = p.Name;
-            var needsUnlock = !p.IsActive && !p.SwitchAllowed && p.UnlockAllowed;
-            var switchBtn = new Button
-            {
-                Content = p.IsActive ? "Active" : needsUnlock ? "Request unlock…" : $"Switch to {p.Name}",
-                Style = (Style)FindResource(needsUnlock ? "Secondary" : "Primary"),
-                IsEnabled = !p.IsActive && (p.SwitchAllowed || p.UnlockAllowed),
-            };
-            switchBtn.Click += async (_, _) => { if (needsUnlock) await RequestUnlockAsync(name); else await SwitchAsync(name); };
-            var testBtn = new Button { Content = "Test lock", Style = (Style)FindResource("Secondary"), IsEnabled = p.TestAllowed, ToolTip = p.TestAllowed ? null : p.TestHint };
-            testBtn.Click += async (_, _) => await StartTestAsync(name);
-            var previewBtn = new Button { Content = "Preview", Style = (Style)FindResource("Secondary") };
-            previewBtn.Click += async (_, _) => await PreviewAsync(name);
-
-            var buttons = new WrapPanel();
-            buttons.Children.Add(switchBtn);
-            buttons.Children.Add(testBtn);
-            buttons.Children.Add(previewBtn);
-            stack.Children.Add(buttons);
-
-            if (p.Play is { } play)
-                stack.Children.Add(new TextBlock
-                {
-                    Text = PlayLine(play), Style = (Style)FindResource("Body"), FontSize = 12, Margin = new Thickness(0, 4, 0, 0),
-                    Foreground = Brush(play.Allowed ? "#2E7D6B" : "#5F6B7A"),
-                });
-            if (!p.IsActive && !p.SwitchAllowed)
-                stack.Children.Add(new TextBlock { Text = p.UnlockAllowed ? $"Looser than now – needs an unlock request ({_status!.UnlocksLeftToday} left today)." : (p.UnlockHint.Length > 0 ? p.UnlockHint : p.SwitchHint),
-                    Style = (Style)FindResource("Body"), FontSize = 12, Margin = new Thickness(0, 4, 0, 0) });
-
-            ProfileCards.Children.Add(new Border { Style = (Style)FindResource("Card"), Child = stack });
-        }
-    }
-
-    // ================================================================ running requests
-
-    /// <summary>Send a request to the service and show its answer in the Details box.</summary>
-    private async Task<IpcResponse?> RunAsync(string title, IpcRequest request)
-    {
-        if (_busy) return null;
-        _busy = true;
-        Tabs.IsEnabled = false;
-        RestoreNowButton.IsEnabled = false;
-        Mouse.OverrideCursor = Cursors.Wait;
-        DetailsExpander.IsExpanded = true;
-        Output.Text = title + " …";
-        try
-        {
-            var r = await _client.SendAsync(request);
-            Output.Text = r.Ok ? $"{title}\n\n{r.Text}" : $"{title} – not done\n\n{r.Error}";
-            return r;
-        }
-        catch (Exception e)
-        {
-            Output.Text = $"{title} – did not work\n\n{e.Message}";
-            return null;
-        }
-        finally
-        {
-            Mouse.OverrideCursor = null;
-            Tabs.IsEnabled = true;
-            RestoreNowButton.IsEnabled = true;
-            _busy = false;
-            _cardsSignature = "";
-            await RefreshStatusAsync();
-            await LoadHistoryAsync();
-        }
-    }
-
-    private Task PreviewAsync(string profile) =>
-        RunAsync($"Preview: {profile}", new IpcRequest { Command = IpcCommands.Preview, Profile = profile });
-
-    private async Task SwitchAsync(string profile)
-    {
-        var p = _status?.Profiles.FirstOrDefault(x => x.Name == profile);
-        if (p == null) return;
-        var msg = $"Switch to {p.Name} now?\n\n{p.Description}\n\n" +
-                  (p.Play != null
-                      ? "Play time counts while this profile is active. When it's over, NetGuard switches to Offline by itself."
-                      : "This lock has no end time. Stricter profiles are always one click away; looser ones need an unlock request.");
-        if (MessageBox.Show(this, msg, "Switch profile", MessageBoxButton.OKCancel, MessageBoxImage.Question) != MessageBoxResult.OK) return;
-        await RunAsync($"Switch to {p.Name}", new IpcRequest { Command = IpcCommands.Switch, Profile = profile });
-    }
-
-    private async Task StartTestAsync(string profile)
-    {
-        var p = _status?.Profiles.FirstOrDefault(x => x.Name == profile);
-        if (p == null) return;
-        var minutes = int.Parse((string)((ComboBoxItem)MinutesBox.SelectedItem).Tag);
-        var until = DateTime.Now.AddMinutes(minutes);
-        var what = p.Kind == "AllowAll"
-            ? "everything except Steam can use the internet"
-            : p.Programs.Count == 0 ? "nothing can use the internet" : "only " + string.Join(", ", p.Programs) + " can use the internet";
-        if (MessageBox.Show(this,
-                $"Start a {minutes}-minute {p.Name} test lock?\n\nUntil about {until:t}, {what}.\n\n" +
-                "It ends by itself. You can also end it early with \"Restore internet now\".",
-                "Start test lock", MessageBoxButton.OKCancel, MessageBoxImage.Question) != MessageBoxResult.OK)
-            return;
-        await RunAsync($"Test lock: {p.Name} for {minutes} min", new IpcRequest { Command = IpcCommands.TestStart, Profile = profile, Minutes = minutes });
-    }
-
-    private async void OnRestoreNow(object sender, RoutedEventArgs e) =>
-        await RunAsync("Ending the test lock", new IpcRequest { Command = IpcCommands.TestEnd });
-
-    // ---------- setup
-
-    // ---------- history
-
-    private async void OnRefreshHistory(object sender, RoutedEventArgs e)
-    {
-        await Summary.RefreshAsync();
-        await LoadHistoryAsync();
-    }
-
-    private async Task LoadHistoryAsync()
-    {
-        try
-        {
-            var r = await _client.SendAsync(new IpcRequest { Command = IpcCommands.History }, TimeSpan.FromSeconds(15));
-            var rows = (r.History ?? new()).Select(h => new LogRow(
-                h.Ts.ToLocalTime().ToString("ddd dd.MM. HH:mm:ss"), h.What, h.Details)).ToList();
-            HistoryList.ItemsSource = rows;
-            HistoryCount.Text = rows.Count == 0 ? "Nothing logged yet." : $"{rows.Count} entries (newest first)";
-        }
-        catch (GuardClient.ServiceUnavailableException) { HistoryCount.Text = "The service isn't running, so the history can't be shown."; }
-        catch (Exception e) { HistoryCount.Text = "Could not load the history: " + e.Message; }
-    }
-
-    // ---------- tools
-
-    private async void OnRecover(object sender, RoutedEventArgs e)
-    {
-        string? code = null;
-        if (_status?.ActiveProfile != null)
-        {
-            code = Dialogs.AskRecoveryCode(this,
-                $"Emergency restore ends the {_status.ActiveProfile} lock now and brings back normal internet. It will be logged.");
-            if (code == null) return;
-        }
-        else if (MessageBox.Show(this, "No lock is active. Run the restore anyway (removes any NetGuard rules left over)?",
-                     "Emergency restore", MessageBoxButton.OKCancel, MessageBoxImage.Question) != MessageBoxResult.OK)
-            return;
-        await RunAsync("Emergency restore", new IpcRequest { Command = IpcCommands.Recover, Code = code });
-    }
+    private async void OnPracticeEnd(object sender, RoutedEventArgs e) =>
+        await RunAsync("End practice mode", new IpcRequest { Command = IpcCommands.PracticeEnd });
 
     private async void OnCreateRecoveryCode(object sender, RoutedEventArgs e)
     {
@@ -514,15 +490,28 @@ public partial class MainWindow : Window
             MessageBox.Show(this, "Create a new recovery code? The old one stops working.", "Recovery code",
                 MessageBoxButton.OKCancel, MessageBoxImage.Question) != MessageBoxResult.OK)
             return;
-        IpcResponse r;
-        try { r = await _client.SendAsync(new IpcRequest { Command = IpcCommands.RecoveryCreate }); }
-        catch (Exception ex) { Output.Text = "Could not create a recovery code: " + ex.Message; return; }
-        if (!r.Ok || r.Text == null) { Output.Text = "Could not create a recovery code: " + r.Error; return; }
-        Dialogs.ShowNewRecoveryCode(this, r.Text);
-        Output.Text = "Recovery code created. Keep the paper safe.";
-        _cardsSignature = "";
+        try
+        {
+            var r = await _client.CallAsync(new IpcRequest { Command = IpcCommands.RecoveryCreate });
+            Dialogs.ShowNewRecoveryCode(this, r.Text!);
+            ShowMessage("Recovery code created. Keep the paper safe.", ok: true);
+        }
+        catch (Exception ex) { ShowMessage("Couldn't create a recovery code: " + ex.Message, ok: false); }
         await RefreshStatusAsync();
-        await LoadHistoryAsync();
+    }
+
+    private async void OnRecover(object sender, RoutedEventArgs e)
+    {
+        string? code = null;
+        if (_status?.ActiveProfile != null)
+        {
+            code = Dialogs.AskRecoveryCode(this, $"Emergency restore ends the {_status.ActiveProfile} lock now and brings back normal internet. It will be logged.");
+            if (code == null) return;
+        }
+        else if (MessageBox.Show(this, "No lock is active. Run the restore anyway (removes any NetGuard rules left over)?",
+                     "Emergency restore", MessageBoxButton.OKCancel, MessageBoxImage.Question) != MessageBoxResult.OK)
+            return;
+        await RunAsync("Emergency restore", new IpcRequest { Command = IpcCommands.Recover, Code = code });
     }
 
     private async void OnUninstall(object sender, RoutedEventArgs e)
@@ -541,8 +530,7 @@ public partial class MainWindow : Window
         var r = await RunAsync("Preparing to uninstall", new IpcRequest { Command = IpcCommands.PrepareUninstall, Code = code });
         if (r?.Ok != true) return;
         await Task.Delay(3000); // let the service stop
-        var uninstaller = System.IO.Path.Combine(AppContext.BaseDirectory, "unins000.exe");
-        if (!System.IO.File.Exists(uninstaller)) uninstaller = System.IO.Path.Combine(System.IO.Path.GetDirectoryName(Environment.ProcessPath!)!, "unins000.exe");
+        var uninstaller = System.IO.Path.Combine(System.IO.Path.GetDirectoryName(Environment.ProcessPath!)!, "unins000.exe");
         try
         {
             Process.Start(new ProcessStartInfo(uninstaller) { UseShellExecute = true, Verb = "runas" });
@@ -550,21 +538,21 @@ public partial class MainWindow : Window
         }
         catch (Exception ex)
         {
-            Output.Text += "\n\nCould not start the uninstaller (" + ex.Message + "). Use Windows Settings → Apps → NetGuard → Uninstall.";
+            ShowMessage("Couldn't start the uninstaller (" + ex.Message + "). Use Windows Settings → Apps → NetGuard → Uninstall.", ok: false);
         }
     }
 
     private async void OnStatus(object sender, RoutedEventArgs e) =>
-        await RunAsync("Status", new IpcRequest { Command = IpcCommands.StatusText });
+        await RunAsync("Status", new IpcRequest { Command = IpcCommands.StatusText }, ResultView.Dialog);
 
     private async void OnAuditOn(object sender, RoutedEventArgs e) =>
-        await RunAsync("Start recording blocked connections", new IpcRequest { Command = IpcCommands.Audit, On = true });
+        await RunAsync("Start recording", new IpcRequest { Command = IpcCommands.Audit, On = true });
 
     private async void OnAuditOff(object sender, RoutedEventArgs e) =>
-        await RunAsync("Stop recording blocked connections", new IpcRequest { Command = IpcCommands.Audit, On = false });
+        await RunAsync("Stop recording", new IpcRequest { Command = IpcCommands.Audit, On = false });
 
     private async void OnShowBlocked(object sender, RoutedEventArgs e) =>
-        await RunAsync("Blocked programs (last 10 minutes)", new IpcRequest { Command = IpcCommands.Blocked });
+        await RunAsync("Blocked programs (last 10 minutes)", new IpcRequest { Command = IpcCommands.Blocked }, ResultView.Dialog);
 
     private void OnStartService(object sender, RoutedEventArgs e)
     {
@@ -573,31 +561,29 @@ public partial class MainWindow : Window
         {
             var p = Process.Start(new ProcessStartInfo(ngctl, "service on") { UseShellExecute = true, Verb = "runas", WindowStyle = ProcessWindowStyle.Hidden });
             p?.WaitForExit(30_000);
-            Output.Text = "Asked Windows to start the NetGuard protection service.";
+            ShowMessage("Asked Windows to start the NetGuard protection service.", ok: true);
         }
-        catch (Win32Exception) { Output.Text = "Cancelled."; }
-        catch (Exception ex) { Output.Text = "Could not start the service: " + ex.Message; }
+        catch (Win32Exception) { }
+        catch (Exception ex) { ShowMessage("Couldn't start the service: " + ex.Message, ok: false); }
         _ = RefreshStatusAsync();
     }
 
     private async void OnCheckUpdate(object sender, RoutedEventArgs e)
     {
         InstallUpdateButton.IsEnabled = false;
-        Output.Text = "Checking for updates …";
         try
         {
             _latest = await Updater.CheckLatestAsync();
             var current = GitHubReleases.CurrentVersion;
-            if (_latest.Version <= current)
-                Output.Text = $"You have the newest version ({current}).";
+            if (_latest.Version <= current) ShowMessage($"You have the newest version ({current}).", ok: true);
             else
             {
-                Output.Text = $"Version {_latest.Version} is available (you have {current}).\n\nWhat's new:\n{_latest.Notes}";
+                ShowMessage($"Version {_latest.Version} is available (you have {current}).", ok: true, sticky: true);
                 InstallUpdateButton.IsEnabled = true;
                 VersionText.Text = $"Installed version: {current} – version {_latest.Version} is available.";
             }
         }
-        catch (Exception ex) { Output.Text = "Could not check for updates: " + ex.Message; }
+        catch (Exception ex) { ShowMessage("Couldn't check for updates: " + ex.Message, ok: false); }
     }
 
     private async void OnInstallUpdate(object sender, RoutedEventArgs e)
@@ -614,5 +600,26 @@ public partial class MainWindow : Window
             Application.Current.Shutdown();
         }
         else InstallUpdateButton.IsEnabled = true;
+    }
+
+    // ================================================================ history
+
+    private async void OnRefreshHistory(object sender, RoutedEventArgs e)
+    {
+        await Summary.RefreshAsync();
+        await LoadHistoryAsync();
+    }
+
+    private async Task LoadHistoryAsync()
+    {
+        try
+        {
+            var r = await _client.SendAsync(new IpcRequest { Command = IpcCommands.History }, TimeSpan.FromSeconds(15));
+            var rows = (r.History ?? new()).Select(h => new LogRow(h.Ts.ToLocalTime().ToString("ddd dd.MM. HH:mm:ss"), h.What, h.Details)).ToList();
+            HistoryList.ItemsSource = rows;
+            HistoryCount.Text = rows.Count == 0 ? "Nothing logged yet." : $"Everything NetGuard did – {rows.Count} entries, newest first";
+        }
+        catch (GuardClient.ServiceUnavailableException) { HistoryCount.Text = "The service isn't running, so the history can't be shown."; }
+        catch (Exception e) { HistoryCount.Text = "Couldn't load the history: " + e.Message; }
     }
 }

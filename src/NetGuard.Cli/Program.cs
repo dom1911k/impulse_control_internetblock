@@ -49,7 +49,7 @@ Profiles in the default config: Offline, WoW, Maintenance
         catch (UnauthorizedAccessException)
         {
             Err("Access denied: NetGuard protects its files and service, even from administrators.");
-            Console.WriteLine("Use the NetGuard window instead (emergency restore: Tools → Emergency restore, with your recovery code).");
+            Console.WriteLine("Use the NetGuard window instead (emergency restore: Settings → Emergency restore, with your recovery code).");
             return 1;
         }
         catch (Exception e)
@@ -399,7 +399,7 @@ Profiles in the default config: Offline, WoW, Maintenance
             {
                 Err("The NetGuard service is running. Emergency restore needs your recovery code:");
                 Console.WriteLine("  ngctl recover --code XXXXX-XXXXX-XXXXX-XXXXX-XXXXX-XXXXX");
-                Console.WriteLine("(Or in the NetGuard window: Tools → Emergency restore.)");
+                Console.WriteLine("(Or in the NetGuard window: Settings → Emergency restore.)");
                 return 1;
             }
             var r = new GuardClient().SendAsync(new NetGuard.Core.Ipc.IpcRequest { Command = NetGuard.Core.Ipc.IpcCommands.Recover, Code = code })
@@ -503,7 +503,7 @@ Profiles in the default config: Offline, WoW, Maintenance
                 try { ServiceControl.StopAndDisable(); }
                 catch (Exception e) when (e is InvalidOperationException or System.ComponentModel.Win32Exception)
                 {
-                    Err("The service protects itself and can't be stopped. To remove NetGuard: NetGuard window → Tools → Uninstall NetGuard.");
+                    Err("The service protects itself and can't be stopped. To remove NetGuard: NetGuard window → Settings → Advanced → Uninstall NetGuard.");
                     return 1;
                 }
                 Warn("NetGuard service stopped and disabled. The firewall rules stay as they are, but nothing repairs them now.");

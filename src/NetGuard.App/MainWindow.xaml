@@ -1,7 +1,7 @@
 <Window x:Class="NetGuard.App.MainWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="NetGuard" Width="1040" Height="760" MinWidth="860" MinHeight="620"
+        Title="NetGuard" Width="1100" Height="820" MinWidth="880" MinHeight="620"
         WindowStartupLocation="CenterScreen" Background="#F4F6F8"
         FontFamily="Segoe UI" FontSize="14" Icon="Assets/netguard.ico">
     <DockPanel>
@@ -18,53 +18,39 @@
                     <ColumnDefinition Width="Auto"/>
                 </Grid.ColumnDefinitions>
                 <StackPanel VerticalAlignment="Center">
-                    <TextBlock Text="NETGUARD" FontSize="12" FontWeight="SemiBold" Foreground="#B9C6D2" />
-                    <TextBlock x:Name="StatusTitle" Text="Loading…" FontSize="26" FontWeight="SemiBold" Foreground="White" Margin="0,2,0,2"/>
+                    <TextBlock Text="NETGUARD" FontSize="12" FontWeight="SemiBold" Foreground="#B9C6D2"/>
+                    <TextBlock x:Name="StatusTitle" Text="Loading…" FontSize="26" FontWeight="SemiBold" Foreground="White" Margin="0,2,0,2" TextWrapping="Wrap"/>
                     <TextBlock x:Name="StatusDetail" Text="" Foreground="#DCE4EC" TextWrapping="Wrap"/>
                 </StackPanel>
                 <StackPanel Grid.Column="1" VerticalAlignment="Center" Margin="24,0,0,0">
-                <StackPanel x:Name="PlayPanel" Visibility="Collapsed" HorizontalAlignment="Right">
-                    <TextBlock x:Name="PlayLabel" Text="Play time left" Foreground="#DCE4EC" HorizontalAlignment="Right"/>
-                    <TextBlock x:Name="PlayLeftText" Text="0:00" FontSize="40" FontWeight="Light" Foreground="White" HorizontalAlignment="Right"/>
-                    <Button x:Name="GraceButton" Content="Extra minutes (once today)" Style="{StaticResource Secondary}" Margin="0,4,0,0" Visibility="Collapsed" Click="OnGrace"/>
-                </StackPanel>
-                <StackPanel x:Name="CountdownPanel" Visibility="Collapsed">
-                    <TextBlock Text="Internet comes back in" Foreground="#DCE4EC" HorizontalAlignment="Right"/>
-                    <TextBlock x:Name="CountdownText" Text="00:00" FontSize="40" FontWeight="Light" Foreground="White" HorizontalAlignment="Right"/>
-                    <Button x:Name="RestoreNowButton" Content="Restore internet now" Style="{StaticResource Secondary}"
-                            Margin="0,4,0,0" Click="OnRestoreNow"/>
-                </StackPanel>
+                    <StackPanel x:Name="PlayPanel" Visibility="Collapsed" HorizontalAlignment="Right">
+                        <TextBlock x:Name="PlayLabel" Text="Play time left" Foreground="#DCE4EC" HorizontalAlignment="Right"/>
+                        <TextBlock x:Name="PlayLeftText" Text="0:00" FontSize="40" FontWeight="Light" Foreground="White" HorizontalAlignment="Right"/>
+                        <Button x:Name="GraceButton" Content="+10 min (once today)" Style="{StaticResource Secondary}" Margin="0,4,0,0" Visibility="Collapsed" Click="OnGrace"/>
+                    </StackPanel>
+                    <StackPanel x:Name="CountdownPanel" Visibility="Collapsed">
+                        <TextBlock Text="Internet comes back in" Foreground="#DCE4EC" HorizontalAlignment="Right"/>
+                        <TextBlock x:Name="CountdownText" Text="00:00" FontSize="40" FontWeight="Light" Foreground="White" HorizontalAlignment="Right"/>
+                        <Button x:Name="RestoreNowButton" Content="End test lock now" Style="{StaticResource Secondary}" Margin="0,4,0,0" Click="OnRestoreNow"/>
+                    </StackPanel>
                 </StackPanel>
             </Grid>
         </Border>
 
-        <!-- ===== Details / output ===== -->
-        <Border DockPanel.Dock="Bottom" Background="White" BorderBrush="{StaticResource Line}" BorderThickness="0,1,0,0">
-            <Expander x:Name="DetailsExpander" Header="Details" Padding="16,6" IsExpanded="True">
-                <TextBox x:Name="Output" Height="170" IsReadOnly="True" FontFamily="Consolas" FontSize="12.5"
-                         TextWrapping="NoWrap" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Auto"
-                         BorderThickness="0" Background="#FAFBFC" Padding="8"/>
-            </Expander>
+        <!-- ===== Message bar (results of what you just did) ===== -->
+        <Border x:Name="MessageBar" DockPanel.Dock="Top" Visibility="Collapsed" Padding="28,10" Background="#E8F3F0">
+            <DockPanel>
+                <Button DockPanel.Dock="Right" Content="✕" Background="Transparent" BorderThickness="0" Cursor="Hand" Click="OnCloseMessage" Padding="6,0"/>
+                <TextBlock x:Name="MessageText" TextWrapping="Wrap" VerticalAlignment="Center"/>
+            </DockPanel>
         </Border>
 
         <TabControl x:Name="Tabs" Margin="18,14,18,10" Background="Transparent" BorderThickness="0">
 
-            <!-- ===== Profiles ===== -->
-            <TabItem Header="Profiles">
+            <!-- ===== Home ===== -->
+            <TabItem x:Name="HomeTab" Header="Home">
                 <ScrollViewer VerticalScrollBarVisibility="Auto">
                     <StackPanel Margin="4,14,0,0">
-                        <Border Background="#E8F3F0" CornerRadius="8" Padding="14,10" Margin="0,0,14,14">
-                            <TextBlock TextWrapping="Wrap" Foreground="#24584C">
-                                <Run FontWeight="SemiBold" Text="Switch"/>
-                                <Run Text="starts a real lock with no end time. Stricter profiles are always one click away. Looser ones need an unlock request: a reason, a 45-minute wait, then retyping a passage – at most twice a day. Games with a play plan are available during their play time."/>
-                                <LineBreak/>
-                                <Run FontWeight="SemiBold" Text="Commit"/>
-                                <Run Text="promises to stay in a profile (or stricter) until a time you choose – no unlock requests until then. It can be extended, never shortened."/>
-                                <LineBreak/>
-                                <Run FontWeight="SemiBold" Text="Test lock"/>
-                                <Run Text="ends by itself after the time you choose – only possible while you have normal internet."/>
-                            </TextBlock>
-                        </Border>
                         <TextBlock x:Name="NoticeText" Visibility="Collapsed" TextWrapping="Wrap" Foreground="#8A4B00" Margin="0,0,14,12"/>
 
                         <!-- Unlock request in progress -->
@@ -89,20 +75,19 @@
                             </StackPanel>
                         </Border>
 
-                        <StackPanel Orientation="Horizontal" Margin="0,0,0,14">
-                            <Button x:Name="CommitButton" Content="Commit…" Style="{StaticResource Primary}" Margin="0,0,12,0" Click="OnCommit"/>
-                            <TextBlock x:Name="CommitText" VerticalAlignment="Center" Margin="0,0,24,0" Foreground="{StaticResource Ink}"/>
-                            <TextBlock Text="Test length" VerticalAlignment="Center" Margin="0,0,10,0" Foreground="{StaticResource Ink}"/>
-                            <ComboBox x:Name="MinutesBox" Width="130" SelectedIndex="0">
-                                <ComboBoxItem Content="3 minutes" Tag="3"/>
-                                <ComboBoxItem Content="5 minutes" Tag="5"/>
-                                <ComboBoxItem Content="10 minutes" Tag="10"/>
-                                <ComboBoxItem Content="15 minutes" Tag="15"/>
-                            </ComboBox>
-                        </StackPanel>
+                        <DockPanel Margin="0,0,14,10">
+                            <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Center">
+                                <TextBlock x:Name="CommitText" VerticalAlignment="Center" Margin="0,0,12,0" Foreground="{StaticResource Muted}"/>
+                                <Button x:Name="CommitButton" Content="Commit…" Style="{StaticResource Secondary}" Margin="0" Click="OnCommit"
+                                        ToolTip="Promise to stay in a profile (or stricter) until a time you choose. Can be extended, never shortened."/>
+                            </StackPanel>
+                            <TextBlock Text="Profiles" Style="{StaticResource H2}" VerticalAlignment="Center" Margin="0"/>
+                        </DockPanel>
                         <UniformGrid x:Name="ProfileCards" Columns="3"/>
                         <TextBlock x:Name="NoConfigHint" Style="{StaticResource Body}" Visibility="Collapsed"
-                                   Text="NetGuard isn't set up yet. Setup → Run setup wizard."/>
+                                   Text="NetGuard isn't set up yet. Settings → Run setup wizard."/>
+
+                        <ContentControl x:Name="StatsHost" Margin="0,10,0,0"/>
                     </StackPanel>
                 </ScrollViewer>
             </TabItem>
@@ -113,113 +98,114 @@
             <!-- ===== Programs ===== -->
             <TabItem x:Name="ProgramsTab" Header="Programs"/>
 
-            <!-- ===== Setup ===== -->
-            <TabItem Header="Setup">
-                <ScrollViewer VerticalScrollBarVisibility="Auto">
-                    <StackPanel Margin="4,14,0,0">
-                        <Border Style="{StaticResource Card}">
-                            <StackPanel>
-                                <TextBlock Style="{StaticResource H2}" Text="Setup wizard"/>
-                                <TextBlock Style="{StaticResource Body}" Text="Finds your apps, checks which programs each profile allows, creates your recovery code, and runs a one-minute recovery test."/>
-                                <Button Content="Run setup wizard" Style="{StaticResource Primary}" HorizontalAlignment="Left" Click="OnRunWizard"/>
-                            </StackPanel>
-                        </Border>
-                        <Border Style="{StaticResource Card}">
-                            <StackPanel>
-                                <TextBlock Style="{StaticResource H2}" Text="Practice mode"/>
-                                <TextBlock Style="{StaticResource Body}" Text="Try unlocks, commitments and play time without waiting: for 30 minutes the unlock wait is 1 minute, the confirm window 3 minutes with a short passage, Maintenance lasts 2 minutes, play time counts 10× faster and looser plan changes wait 2 minutes. Only possible with normal internet. Afterwards normal internet comes back by itself and nothing you did counts."/>
-                                <WrapPanel>
-                                    <Button x:Name="PracticeStartButton" Content="Start practice (30 min)" Style="{StaticResource Primary}" Click="OnPracticeStart"/>
-                                    <Button x:Name="PracticeEndButton" Content="End practice now" Style="{StaticResource Secondary}" Click="OnPracticeEnd"/>
-                                </WrapPanel>
-                            </StackPanel>
-                        </Border>
-                        <Border Style="{StaticResource Card}">
-                            <StackPanel>
-                                <TextBlock Style="{StaticResource H2}" Text="Recovery code"/>
-                                <TextBlock Style="{StaticResource Body}" Text="Your emergency key. It's the only way to end a lock early (until the unlock process in milestone 4) and to uninstall NetGuard during a lock. It's shown exactly once: write it on paper and put it somewhere inconvenient – or give it to someone you trust. Don't keep it on this PC."/>
-                                <TextBlock x:Name="RecoveryStateText" Style="{StaticResource Body}" FontWeight="SemiBold" Text=""/>
-                                <Button x:Name="RecoveryButton" Content="Create recovery code" Style="{StaticResource Primary}" HorizontalAlignment="Left" Click="OnCreateRecoveryCode"/>
-                            </StackPanel>
-                        </Border>
-                    </StackPanel>
-                </ScrollViewer>
-            </TabItem>
-
             <!-- ===== History ===== -->
             <TabItem x:Name="HistoryTab" Header="History">
                 <DockPanel Margin="4,14,0,0">
                     <ContentControl x:Name="SummaryHost" DockPanel.Dock="Top"/>
-                    <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Margin="0,0,0,10">
-                        <Button Content="Refresh" Style="{StaticResource Secondary}" Click="OnRefreshHistory"/>
-                        <TextBlock x:Name="HistoryCount" VerticalAlignment="Center" Foreground="{StaticResource Muted}" Margin="6,0,0,8"/>
-                    </StackPanel>
-                    <ListView x:Name="HistoryList" BorderBrush="{StaticResource Line}">
+                    <DockPanel DockPanel.Dock="Top" Margin="0,0,14,8">
+                        <Button DockPanel.Dock="Right" Content="Refresh" Style="{StaticResource Secondary}" Margin="0" Click="OnRefreshHistory"/>
+                        <TextBlock x:Name="HistoryCount" VerticalAlignment="Center" Foreground="{StaticResource Muted}"/>
+                    </DockPanel>
+                    <ListView x:Name="HistoryList" BorderBrush="{StaticResource Line}" MinHeight="200" Margin="0,0,14,0">
                         <ListView.View>
                             <GridView>
                                 <GridViewColumn Header="When" Width="150" DisplayMemberBinding="{Binding When}"/>
-                                <GridViewColumn Header="What" Width="200" DisplayMemberBinding="{Binding What}"/>
-                                <GridViewColumn Header="Details" Width="520" DisplayMemberBinding="{Binding Details}"/>
+                                <GridViewColumn Header="What" Width="210" DisplayMemberBinding="{Binding What}"/>
+                                <GridViewColumn Header="Details" Width="560" DisplayMemberBinding="{Binding Details}"/>
                             </GridView>
                         </ListView.View>
                     </ListView>
                 </DockPanel>
             </TabItem>
 
-            <!-- ===== Tools ===== -->
-            <TabItem Header="Tools">
+            <!-- ===== Settings ===== -->
+            <TabItem x:Name="SettingsTab" Header="Settings">
                 <ScrollViewer VerticalScrollBarVisibility="Auto">
-                    <WrapPanel Margin="4,14,0,0" ItemWidth="470">
-                        <Border Style="{StaticResource Card}">
-                            <StackPanel>
-                                <TextBlock Style="{StaticResource H2}" Text="Emergency restore"/>
-                                <TextBlock Style="{StaticResource Body}" Text="Ends any lock right now and restores normal internet. Needs your recovery code while a lock is active. Every use is logged."/>
-                                <Button Content="Emergency restore…" Style="{StaticResource Secondary}" HorizontalAlignment="Left" Click="OnRecover"/>
-                            </StackPanel>
-                        </Border>
-                        <Border Style="{StaticResource Card}">
-                            <StackPanel>
-                                <TextBlock Style="{StaticResource H2}" Text="Protection service"/>
-                                <TextBlock x:Name="ServiceText" Style="{StaticResource Body}" Text=""/>
-                                <Button x:Name="StartServiceButton" Content="Start protection service" Style="{StaticResource Secondary}" HorizontalAlignment="Left" Click="OnStartService"/>
-                            </StackPanel>
-                        </Border>
-                        <Border Style="{StaticResource Card}">
-                            <StackPanel>
-                                <TextBlock Style="{StaticResource H2}" Text="Current status"/>
-                                <TextBlock Style="{StaticResource Body}" Text="Firewall settings, NetGuard's rules, and whether anything differs from the active profile."/>
-                                <Button Content="Show status" Style="{StaticResource Secondary}" HorizontalAlignment="Left" Click="OnStatus"/>
-                            </StackPanel>
-                        </Border>
-                        <Border Style="{StaticResource Card}">
-                            <StackPanel>
-                                <TextBlock Style="{StaticResource H2}" Text="Find blocked programs"/>
-                                <TextBlock Style="{StaticResource Body}" Text="If something that should work doesn't (e.g. Battle.net can't log in): start recording, try again, then show what was blocked."/>
-                                <WrapPanel>
-                                    <Button Content="Start recording" Style="{StaticResource Secondary}" Click="OnAuditOn"/>
-                                    <Button Content="Stop recording" Style="{StaticResource Secondary}" Click="OnAuditOff"/>
-                                    <Button Content="Show blocked (last 10 min)" Style="{StaticResource Primary}" Click="OnShowBlocked"/>
-                                </WrapPanel>
-                            </StackPanel>
-                        </Border>
-                        <Border Style="{StaticResource Card}">
-                            <StackPanel>
-                                <TextBlock Style="{StaticResource H2}" Text="Updates"/>
-                                <TextBlock x:Name="VersionText" Style="{StaticResource Body}" Text=""/>
-                                <WrapPanel>
-                                    <Button Content="Check for updates" Style="{StaticResource Secondary}" Click="OnCheckUpdate"/>
-                                    <Button x:Name="InstallUpdateButton" Content="Install update" Style="{StaticResource Primary}" IsEnabled="False" Click="OnInstallUpdate"/>
-                                </WrapPanel>
-                            </StackPanel>
-                        </Border>
-                        <Border Style="{StaticResource Card}">
-                            <StackPanel>
-                                <TextBlock Style="{StaticResource H2}" Text="Uninstall NetGuard"/>
-                                <TextBlock Style="{StaticResource Body}" Text="NetGuard protects itself, so it can only be removed from here. Restores normal internet first. Needs your recovery code while a lock is active."/>
-                                <Button Content="Uninstall NetGuard…" Style="{StaticResource Secondary}" HorizontalAlignment="Left" Click="OnUninstall"/>
-                            </StackPanel>
-                        </Border>
-                    </WrapPanel>
+                    <StackPanel Margin="4,14,0,0">
+                        <WrapPanel ItemWidth="500">
+                            <Border Style="{StaticResource Card}">
+                                <StackPanel>
+                                    <TextBlock Style="{StaticResource H2}" Text="Setup"/>
+                                    <TextBlock Style="{StaticResource Body}" Text="Find your apps, check the programs, create your recovery code and run a one-minute recovery test."/>
+                                    <Button Content="Run setup wizard" Style="{StaticResource Primary}" HorizontalAlignment="Left" Click="OnRunWizard"/>
+                                    <TextBlock x:Name="RecoveryStateText" Style="{StaticResource Body}" FontWeight="SemiBold" Margin="0,10,0,8"/>
+                                    <Button x:Name="RecoveryButton" Content="Create recovery code" Style="{StaticResource Secondary}" HorizontalAlignment="Left" Click="OnCreateRecoveryCode"
+                                            ToolTip="Your emergency key. Shown once – write it on paper. Only replaceable with normal internet."/>
+                                </StackPanel>
+                            </Border>
+                            <Border Style="{StaticResource Card}">
+                                <StackPanel>
+                                    <TextBlock Style="{StaticResource H2}" Text="Practice &amp; test"/>
+                                    <TextBlock Style="{StaticResource Body}" Text="Practice mode: 30 minutes where every waiting time is short and play time counts 10× faster. Nothing counts, and normal internet comes back afterwards. Only with normal internet."/>
+                                    <WrapPanel>
+                                        <Button x:Name="PracticeStartButton" Content="Start practice" Style="{StaticResource Primary}" Click="OnPracticeStart"/>
+                                        <Button x:Name="PracticeEndButton" Content="End practice" Style="{StaticResource Secondary}" Click="OnPracticeEnd"/>
+                                    </WrapPanel>
+                                    <TextBlock Style="{StaticResource Body}" Margin="0,10,0,6" Text="Test lock: a profile for a few minutes, then normal internet by itself."/>
+                                    <WrapPanel>
+                                        <ComboBox x:Name="TestProfileBox" Width="140" Margin="0,0,8,8" VerticalContentAlignment="Center"/>
+                                        <ComboBox x:Name="MinutesBox" Width="110" SelectedIndex="0" Margin="0,0,8,8" VerticalContentAlignment="Center">
+                                            <ComboBoxItem Content="3 minutes" Tag="3"/>
+                                            <ComboBoxItem Content="5 minutes" Tag="5"/>
+                                            <ComboBoxItem Content="10 minutes" Tag="10"/>
+                                            <ComboBoxItem Content="15 minutes" Tag="15"/>
+                                        </ComboBox>
+                                        <Button x:Name="TestLockButton" Content="Start test lock" Style="{StaticResource Secondary}" Click="OnStartTestLock"/>
+                                    </WrapPanel>
+                                </StackPanel>
+                            </Border>
+                            <Border Style="{StaticResource Card}">
+                                <StackPanel>
+                                    <TextBlock Style="{StaticResource H2}" Text="Emergency restore"/>
+                                    <TextBlock Style="{StaticResource Body}" Text="Ends any lock right now with your recovery code. Logged. (Also in the Start menu: NetGuard Emergency Restore.)"/>
+                                    <Button Content="Emergency restore…" Style="{StaticResource Secondary}" HorizontalAlignment="Left" Click="OnRecover"/>
+                                </StackPanel>
+                            </Border>
+                            <Border Style="{StaticResource Card}">
+                                <StackPanel>
+                                    <TextBlock Style="{StaticResource H2}" Text="Updates"/>
+                                    <TextBlock x:Name="VersionText" Style="{StaticResource Body}" Text=""/>
+                                    <WrapPanel>
+                                        <Button Content="Check for updates" Style="{StaticResource Secondary}" Click="OnCheckUpdate"/>
+                                        <Button x:Name="InstallUpdateButton" Content="Install update" Style="{StaticResource Primary}" IsEnabled="False" Click="OnInstallUpdate"/>
+                                    </WrapPanel>
+                                </StackPanel>
+                            </Border>
+                        </WrapPanel>
+
+                        <Expander Header="Advanced" Margin="0,4,14,14" FontSize="15">
+                            <WrapPanel ItemWidth="500" Margin="0,10,0,0">
+                                <Border Style="{StaticResource Card}">
+                                    <StackPanel>
+                                        <TextBlock Style="{StaticResource H2}" Text="Protection service"/>
+                                        <TextBlock x:Name="ServiceText" Style="{StaticResource Body}" Text=""/>
+                                        <WrapPanel>
+                                            <Button Content="Show full status" Style="{StaticResource Secondary}" Click="OnStatus"/>
+                                            <Button x:Name="StartServiceButton" Content="Start protection service" Style="{StaticResource Secondary}" Click="OnStartService"/>
+                                        </WrapPanel>
+                                    </StackPanel>
+                                </Border>
+                                <Border Style="{StaticResource Card}">
+                                    <StackPanel>
+                                        <TextBlock Style="{StaticResource H2}" Text="Find blocked programs"/>
+                                        <TextBlock Style="{StaticResource Body}" Text="If something that should work doesn't: start recording, try again, then show what was blocked."/>
+                                        <WrapPanel>
+                                            <Button Content="Start recording" Style="{StaticResource Secondary}" Click="OnAuditOn"/>
+                                            <Button Content="Stop" Style="{StaticResource Secondary}" Click="OnAuditOff"/>
+                                            <Button Content="Show blocked" Style="{StaticResource Secondary}" Click="OnShowBlocked"/>
+                                        </WrapPanel>
+                                    </StackPanel>
+                                </Border>
+                                <Border Style="{StaticResource Card}">
+                                    <StackPanel>
+                                        <TextBlock Style="{StaticResource H2}" Text="Uninstall NetGuard"/>
+                                        <TextBlock Style="{StaticResource Body}" Text="Restores normal internet first. Needs your recovery code while a lock is active."/>
+                                        <Button Content="Uninstall NetGuard…" Style="{StaticResource Secondary}" HorizontalAlignment="Left" Click="OnUninstall"/>
+                                    </StackPanel>
+                                </Border>
+                            </WrapPanel>
+                        </Expander>
+                    </StackPanel>
                 </ScrollViewer>
             </TabItem>
         </TabControl>

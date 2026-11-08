@@ -120,11 +120,47 @@ public sealed class Guard
 
         var state = _engine.LoadState();
         var r = _rules.Tick(cfg, state, now, elapsed);
+        TrackRunningGames(cfg, state, now, elapsed);
         state.TrustedNowUtc = now;
         _engine.SaveState(state);
         if (r.ConfigChanged) cfg.Save(_engine.Paths.ConfigFile);
         foreach (var e in r.Events) _engine.Log.Append(e.Type, e.Data, ServiceActor);
         if (r.SwitchTo != null) SwitchInternal(cfg, r.SwitchTo, ServiceActor, viaUnlock: false, autoReason: r.SwitchReason);
+    }
+
+    private Dictionary<string, HashSet<string>>? _gameProcessNames;
+    private DateTimeOffset _gameNamesAt;
+
+    /// <summary>Statistics: how long the game itself (e.g. Wow.exe) is actually running – not just the profile being active.</summary>
+    private void TrackRunningGames(NetGuardConfig cfg, NetGuardState state, DateTimeOffset now, TimeSpan elapsed)
+    {
+        if (elapsed <= TimeSpan.Zero) return;
+        try
+        {
+            if (_gameProcessNames == null || now - _gameNamesAt > TimeSpan.FromMinutes(10))
+            {
+                var resolver = new ProgramResolver(_verifier);
+                _gameProcessNames = new(StringComparer.OrdinalIgnoreCase);
+                foreach (var p in cfg.Profiles.Where(StatsBuilder.IsGameProfile))
+                {
+                    var games = p.Plan?.GamePrograms is { Count: > 0 } gp
+                        ? p.Programs.Where(e => gp.Contains(e.Name, StringComparer.OrdinalIgnoreCase))
+                        : p.Programs.Where(e => e.Name.Contains("Warcraft", StringComparison.OrdinalIgnoreCase));
+                    _gameProcessNames[p.Name] = games.SelectMany(e => resolver.Resolve(e, checkPins: false))
+                        .Select(f => Path.GetFileNameWithoutExtension(f.Path)).ToHashSet(StringComparer.OrdinalIgnoreCase);
+                }
+                _gameNamesAt = now;
+            }
+            var running = System.Diagnostics.Process.GetProcesses();
+            var names = running.Select(p => { try { return p.ProcessName; } catch { return ""; } }).ToHashSet(StringComparer.OrdinalIgnoreCase);
+            foreach (var p in running) p.Dispose();
+            var secs = (int)Math.Min(elapsed.TotalSeconds, 300);
+            var day = TimeZoneInfo.ConvertTime(now, TimeZoneInfo.Local).Date;
+            foreach (var (profile, exes) in _gameProcessNames)
+                if (exes.Any(names.Contains))
+                    LockRules.AddUsage(state.GameRunning, profile, day, secs);
+        }
+        catch (Exception e) { _logger.LogDebug(e, "Couldn't check running games"); }
     }
 
     private void SwitchInternal(NetGuardConfig cfg, string target, string actor, bool viaUnlock, string? autoReason = null)
@@ -290,6 +326,11 @@ public sealed class Guard
                     IpcCommands.ProgramReapprove => Reapprove(req, caller),
                     IpcCommands.PracticeStart => PracticeStart(req, caller),
                     IpcCommands.PracticeEnd => EndPractice("ended by you", caller.Name),
+                    IpcCommands.Stats => new IpcResponse
+                    {
+                        Ok = true,
+                        Stats = StatsBuilder.Build(TryLoadConfig(), _engine.LoadState(), _engine.Log.ReadAll(), Now),
+                    },
                     IpcCommands.Summary => new IpcResponse
                     {
                         Ok = true,
@@ -334,7 +375,7 @@ public sealed class Guard
     }
 
     private NetGuardConfig RequireConfig() =>
-        TryLoadConfig() ?? throw new InvalidOperationException("NetGuard isn't set up yet: Setup → Create configuration.");
+        TryLoadConfig() ?? throw new InvalidOperationException("NetGuard isn't set up yet: Settings → Run setup wizard.");
 
     private StatusDto BuildStatus(CallerInfo caller)
     {
@@ -382,7 +423,7 @@ public sealed class Guard
         {
             var sw = _rules.CanSwitch(cfg, state, p.Name, now);
             if (sw.Allowed && !RecoveryCode.Exists(state))
-                sw = new SwitchDecision(false, "Create your recovery code first (Setup step 3). It's your way out in an emergency.");
+                sw = new SwitchDecision(false, "Create your recovery code first (Settings → Setup). It's your way out in an emergency.");
             var test = ProfilePolicy.CanStartTest(state.ActiveProfile);
             dto.Profiles.Add(new ProfileDto
             {
@@ -409,7 +450,7 @@ public sealed class Guard
         var state = _engine.LoadState();
         var target = req.Profile ?? throw new ArgumentException("Which profile?");
         if (!RecoveryCode.Exists(state))
-            return Refuse(caller, req, "Create your recovery code first (Setup). Without it there's no way out of a lock in an emergency.");
+            return Refuse(caller, req, "Create your recovery code first (Settings → Setup). Without it there's no way out of a lock in an emergency.");
         var decision = _rules.CanSwitch(cfg, state, target, Now);
         if (!decision.Allowed) return Refuse(caller, req, decision.Reason);
         SwitchInternal(cfg, target, caller.Name, viaUnlock: false);
@@ -488,11 +529,53 @@ public sealed class Guard
         if (_engine.LoadState().ActiveProfile != null && CheckCode(req, caller) is { } refused) return refused;
         var d = AppDetector.Detect();
         var cfg = DefaultConfig.Create(d);
+        var old = TryLoadConfig();
+        var kept = old == null ? "" : KeepUserSettings(old, cfg);
         DataDirSecurity.Secure(_engine.Paths);
         cfg.Save(_engine.Paths.ConfigFile);
-        _engine.Log.Append(LogTypes.ConfigCreated, new { detected = d }, caller.Name);
+        _engine.Log.Append(LogTypes.ConfigCreated, new { detected = d, reason = kept }, caller.Name);
         Protect();
-        return IpcResponse.Success(Report.Detected(d) + $"\nConfiguration saved.\n\nNext: step 3, create your recovery code.");
+        return IpcResponse.Success(Report.Detected(d) + "\nConfiguration saved." + (kept.Length > 0 ? $"\nKept: {kept}." : ""));
+    }
+
+    /// <summary>"Search again" refreshes the detected programs but keeps everything the user set up themselves.</summary>
+    private static string KeepUserSettings(NetGuardConfig old, NetGuardConfig fresh)
+    {
+        var kept = new List<string>();
+        fresh.Timings = old.Timings;
+        foreach (var o in old.Profiles)
+        {
+            var f = fresh.FindProfile(o.Name);
+            if (f == null)
+            {
+                fresh.Profiles.Add(o); // your own profiles, with their programs and plans
+                kept.Add($"profile {o.Name}");
+                continue;
+            }
+            // programs you added yourself
+            foreach (var e in o.Programs.Where(e => !f.Programs.Any(x => x.Name.Equals(e.Name, StringComparison.OrdinalIgnoreCase))))
+            {
+                f.Programs.Add(e);
+                kept.Add($"{e.Name} in {o.Name}");
+            }
+            if (o.Plan != null)
+            {
+                f.Plan = o.Plan;
+                f.Plan.GamePrograms.RemoveAll(g => !f.Programs.Any(x => x.Name.Equals(g, StringComparison.OrdinalIgnoreCase)));
+                kept.Add($"{o.Name}'s play plan");
+            }
+        }
+        foreach (var e in old.AlwaysBlocked.Where(e => !fresh.AlwaysBlocked.Any(x => x.Name.Equals(e.Name, StringComparison.OrdinalIgnoreCase))))
+        {
+            fresh.AlwaysBlocked.Add(e);
+            kept.Add($"{e.Name} (always blocked)");
+        }
+        foreach (var p in fresh.Profiles.Where(p => p.Plan != null).ToList())
+        {
+            try { fresh.ValidatePlan(p); }
+            catch { p.Plan!.FallbackProfile = "Offline"; }
+        }
+        return string.Join(", ", kept);
     }
 
     /// <summary>
@@ -744,7 +827,7 @@ public sealed class Guard
     {
         var cfg = RequireConfig();
         var state = _engine.LoadState();
-        if (!RecoveryCode.Exists(state)) return Refuse(caller, req, "Create your recovery code first (Setup).");
+        if (!RecoveryCode.Exists(state)) return Refuse(caller, req, "Create your recovery code first (Settings → Setup).");
         var until = req.Until ?? throw new ArgumentException("Until when?");
         var switchTo = _rules.Commit(cfg, state, req.Profile ?? throw new ArgumentException("Which profile?"), until, Now);
         _engine.SaveState(state);
@@ -779,6 +862,7 @@ public sealed class Guard
                 PendingPlan = pending?.Plan,
                 PendingEffectiveUtc = pending?.EffectiveUtc,
                 FallbackChoices = cfg.Profiles.Where(x => x.Kind == ProfileKind.Allowlist && x.Plan == null && x.Name != p.Name).Select(x => x.Name).ToList(),
+                LockActive = state.ActiveProfile != null,
             };
         }).ToList();
         return new IpcResponse { Ok = true, Plans = plans };
@@ -845,6 +929,7 @@ public sealed class Guard
         public List<GraceRecord> Graces { get; set; } = new();
         public List<PendingPlanChange> PendingPlanChanges { get; set; } = new();
         public DateTimeOffset? LastMaintenanceUtc { get; set; }
+        public Dictionary<string, Dictionary<string, int>> GameRunning { get; set; } = new();
     }
 
     /// <summary>
@@ -857,13 +942,14 @@ public sealed class Guard
         var state = _engine.LoadState();
         if (state.ActiveProfile != null) return Refuse(caller, req, "Practice mode can only be started with normal internet (no profile active).");
         if (state.Practice != null) return IpcResponse.Fail("Practice mode is already running.");
-        if (!RecoveryCode.Exists(state)) return Refuse(caller, req, "Create your recovery code first (Setup).");
+        if (!RecoveryCode.Exists(state)) return Refuse(caller, req, "Create your recovery code first (Settings → Setup).");
         var minutes = Math.Clamp(req.Minutes ?? 30, 5, 60);
         var now = Now;
         var snap = new PracticeSnapshot
         {
             UnlockRequests = state.UnlockRequests, Commitment = state.Commitment, PlayUsage = state.PlayUsage,
             Graces = state.Graces, PendingPlanChanges = state.PendingPlanChanges, LastMaintenanceUtc = state.LastMaintenanceUtc,
+            GameRunning = state.GameRunning,
         };
         state.Practice = new PracticeSession
         {
@@ -894,7 +980,13 @@ public sealed class Guard
             state.Commitment = snap.Commitment;
             state.PlayUsage = new Dictionary<string, Dictionary<string, int>>(snap.PlayUsage, StringComparer.OrdinalIgnoreCase);
             state.Graces = snap.Graces;
-            state.PendingPlanChanges = snap.PendingPlanChanges;
+            state.GameRunning = new Dictionary<string, Dictionary<string, int>>(snap.GameRunning, StringComparer.OrdinalIgnoreCase);
+            // Plan changes made during practice are real decisions – keep them, but with the real waiting time.
+            var practiceChanges = state.PendingPlanChanges.Where(c => !snap.PendingPlanChanges.Any(o => o.Id == c.Id)).ToList();
+            var cfgNow = TryLoadConfig();
+            foreach (var c in practiceChanges)
+                c.EffectiveUtc = c.RequestedUtc.AddHours(cfgNow?.Timings.PlanLoosenDelayHours ?? 72);
+            state.PendingPlanChanges = snap.PendingPlanChanges.Where(o => !practiceChanges.Any(c => c.Profile == o.Profile)).Concat(practiceChanges).ToList();
             state.LastMaintenanceUtc = snap.LastMaintenanceUtc;
         }
         catch (Exception e) { _logger.LogWarning(e, "Practice snapshot could not be restored"); }

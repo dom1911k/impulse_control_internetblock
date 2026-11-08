@@ -44,6 +44,7 @@ public static class IpcCommands
     public const string PracticeStart = "practice-start";
     public const string PracticeEnd = "practice-end";
     public const string Summary = "summary";
+    public const string Stats = "stats";
 }
 
 public sealed class IpcRequest
@@ -76,6 +77,7 @@ public sealed class IpcResponse
     public ConfigDto? Config { get; set; }
     public List<PlanDto>? Plans { get; set; }
     public Reporting.SummaryDto? Summary { get; set; }
+    public Reporting.StatsDto? Stats { get; set; }
     public ProgramDto? Program { get; set; }
 
     public static IpcResponse Success(string? text = null) => new() { Ok = true, Text = text };
@@ -219,4 +221,6 @@ public sealed class PlanDto
     public bool HasPending { get; set; }
     public DateTimeOffset? PendingEffectiveUtc { get; set; }
     public List<string> FallbackChoices { get; set; } = new();
+    /// <summary>A lock is active: looser changes wait 72 hours (otherwise every change applies at once).</summary>
+    public bool LockActive { get; set; }
 }

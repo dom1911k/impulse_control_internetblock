@@ -45,6 +45,20 @@ public static class WeeklySummary
 {
     public const string NormalInternet = "Normal internet";
 
+    /// <summary>Periods when practice mode was running (they don't count anywhere).</summary>
+    public static List<(DateTimeOffset from, DateTimeOffset to)> PracticeIntervals(IEnumerable<(DateTimeOffset ts, string type)> entries)
+    {
+        var list = new List<(DateTimeOffset from, DateTimeOffset to)>();
+        DateTimeOffset? start = null;
+        foreach (var (ts, type) in entries.OrderBy(e => e.ts))
+        {
+            if (type == LogTypes.PracticeStarted) start = ts;
+            else if (type == LogTypes.PracticeEnded && start != null) { list.Add((start.Value, ts)); start = null; }
+        }
+        if (start != null) list.Add((start.Value, DateTimeOffset.MaxValue));
+        return list;
+    }
+
     public static DateTime WeekStartOf(DateTime local) => local.Date.AddDays(-(((int)local.DayOfWeek + 6) % 7));
 
     public static SummaryDto Build(Config.NetGuardConfig? cfg, NetGuardState state, IEnumerable<JsonObject> log, DateTimeOffset nowUtc,
@@ -94,14 +108,7 @@ public static class WeeklySummary
         var entries = log.Select(o => (ts: DateTimeOffset.TryParse((string?)o["ts"], out var t) ? t : DateTimeOffset.MinValue, type: (string?)o["type"] ?? "", data: o["data"] as JsonObject))
             .Where(e => e.ts != DateTimeOffset.MinValue).OrderBy(e => e.ts).ToList();
 
-        var practice = new List<(DateTimeOffset from, DateTimeOffset to)>();
-        DateTimeOffset? practiceStart = null;
-        foreach (var e in entries)
-        {
-            if (e.type == LogTypes.PracticeStarted) practiceStart = e.ts;
-            else if (e.type == LogTypes.PracticeEnded && practiceStart != null) { practice.Add((practiceStart.Value, e.ts)); practiceStart = null; }
-        }
-        if (practiceStart != null) practice.Add((practiceStart.Value, DateTimeOffset.MaxValue));
+        var practice = PracticeIntervals(entries.Select(e => (e.ts, e.type)));
         bool InPractice(DateTimeOffset t) => practice.Any(p => t >= p.from && t <= p.to);
 
         string? current = null;

@@ -109,6 +109,11 @@ public sealed class ProgramsPanel : Grid
         addFile.IsEnabled = addRunning.IsEnabled = canAdd;
         add.Children.Add(addFile);
         add.Children.Add(addRunning);
+        if (!isBlocked)
+        {
+            var name = p.Name;
+            add.Children.Add(Btn("Preview firewall changes", false, async () => await PreviewAsync(name)));
+        }
         _detail.Children.Add(add);
         if (!canAdd)
             _detail.Children.Add(new TextBlock { Text = _config.LoosenHint, TextWrapping = TextWrapping.Wrap, Foreground = Muted, FontSize = 12, Margin = new Thickness(0, 0, 0, 10) });
@@ -217,6 +222,16 @@ public sealed class ProgramsPanel : Grid
         var keep = _status.Text;
         await RefreshAsync();
         _status.Text = keep;
+    }
+
+    private async Task PreviewAsync(string profile)
+    {
+        try
+        {
+            var r = await _client.CallAsync(new IpcRequest { Command = IpcCommands.Preview, Profile = profile });
+            Dialogs.ShowText(_owner, $"Preview: {profile}", r.Text ?? "");
+        }
+        catch (Exception e) { _status.Text = e.Message; }
     }
 
     private async Task NewProfileAsync()

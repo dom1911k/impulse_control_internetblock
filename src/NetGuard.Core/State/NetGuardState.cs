@@ -105,8 +105,10 @@ public sealed class NetGuardState
     public string? MaintenanceReturnTo { get; set; }
     public DateTimeOffset? MaintenanceUntilUtc { get; set; }
     public DateTimeOffset? LastMaintenanceUtc { get; set; }
-    /// <summary>Seconds a planned profile was active, per profile and local date (yyyy-MM-dd).</summary>
+    /// <summary>Seconds each profile was active, per profile and local date (yyyy-MM-dd). Play-time limits and statistics.</summary>
     public Dictionary<string, Dictionary<string, int>> PlayUsage { get; set; } = new(StringComparer.OrdinalIgnoreCase);
+    /// <summary>Seconds the game itself (e.g. Wow.exe) was actually running, per game profile and local date.</summary>
+    public Dictionary<string, Dictionary<string, int>> GameRunning { get; set; } = new(StringComparer.OrdinalIgnoreCase);
     public List<GraceRecord> Graces { get; set; } = new();
     public List<PendingPlanChange> PendingPlanChanges { get; set; } = new();
     /// <summary>NetGuard's own clock (ignores jumps of the Windows clock), saved across restarts.</summary>

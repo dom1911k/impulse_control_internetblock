@@ -2,7 +2,7 @@
 
 ## 1. The normal way: emergency restore with your recovery code
 
-NetGuard → **Tools → Emergency restore…** → type your recovery code.
+NetGuard → **Settings → Emergency restore…** → type your recovery code.
 
 Or: Start menu → **NetGuard Emergency Restore** → type your recovery code. (If the NetGuard
 service is broken, this window asks Windows for administrator rights instead and restores directly.)

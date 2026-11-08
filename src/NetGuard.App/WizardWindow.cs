@@ -251,7 +251,7 @@ public sealed class WizardWindow : Window
 
                 var ok = before && !during && ended && after;
                 log.Children.Add(P(ok ? "All good – NetGuard blocks, and it lets go again by itself."
-                    : "Something didn't go as expected. If your internet still doesn't work: NetGuard → Tools → Emergency restore."));
+                    : "Something didn't go as expected. If your internet still doesn't work: NetGuard → Settings → Emergency restore."));
             }
             catch (Exception e) { Line("The test couldn't run: " + e.Message, false); }
             run.IsEnabled = _next.IsEnabled = _back.IsEnabled = _skip.IsEnabled = true;

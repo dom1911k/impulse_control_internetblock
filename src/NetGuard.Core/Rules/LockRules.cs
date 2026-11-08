@@ -378,14 +378,11 @@ public sealed class LockRules
         var r = new TickResult();
         var active = state.ActiveProfile == null ? null : cfg.FindProfile(state.ActiveProfile);
 
-        // play time used
-        if (active?.Plan != null && elapsed > TimeSpan.Zero)
+        // time in the active profile (any profile – it feeds both play-time limits and the statistics)
+        if (active != null && elapsed > TimeSpan.Zero)
         {
             var secs = (int)Math.Min(elapsed.TotalSeconds, 300) * Speed;
-            if (!state.PlayUsage.TryGetValue(active.Name, out var days)) state.PlayUsage[active.Name] = days = new();
-            var key = DateKey(Local(now).Date);
-            days[key] = (days.TryGetValue(key, out var s) ? s : 0) + secs;
-            foreach (var old in days.Keys.Where(k => string.CompareOrdinal(k, DateKey(Local(now).Date.AddDays(-60))) < 0).ToList()) days.Remove(old);
+            AddUsage(state.PlayUsage, active.Name, Local(now).Date, secs);
             r.StateChanged = true;
         }
 
@@ -438,6 +435,17 @@ public sealed class LockRules
             r.SwitchReason = "play time is over";
         }
         return r;
+    }
+
+    public const int KeepUsageDays = 400;
+
+    public static void AddUsage(Dictionary<string, Dictionary<string, int>> usage, string profile, DateTime localDay, int seconds)
+    {
+        if (!usage.TryGetValue(profile, out var days)) usage[profile] = days = new();
+        var key = DateKey(localDay);
+        days[key] = (days.TryGetValue(key, out var s) ? s : 0) + seconds;
+        var cutoff = DateKey(localDay.AddDays(-KeepUsageDays));
+        foreach (var old in days.Keys.Where(k => string.CompareOrdinal(k, cutoff) < 0).ToList()) days.Remove(old);
     }
 
     /// <summary>Where to go back to: the given profile, or – if it's a game outside its play time – its fallback.</summary>

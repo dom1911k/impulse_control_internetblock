@@ -20,6 +20,10 @@ public sealed class PlayTimePanel : ScrollViewer
     private string? _profile;
     private PlayPlan? _draft;   // what the user is editing (null = no plan)
     private readonly TextBlock _status = new() { TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 10, 0, 0) };
+    private readonly System.Windows.Threading.DispatcherTimer _autosave = new() { Interval = TimeSpan.FromSeconds(1.2) };
+    private bool _dirty;
+    private Button? _saveButton;
+    private bool LockActive => _plans.FirstOrDefault()?.LockActive == true;
 
     private static readonly SolidColorBrush Muted = new(Color.FromRgb(0x5F, 0x6B, 0x7A));
     private static readonly SolidColorBrush Ink = new(Color.FromRgb(0x1F, 0x29, 0x33));
@@ -27,10 +31,12 @@ public sealed class PlayTimePanel : ScrollViewer
     private static readonly DayOfWeek[] Week =
         { DayOfWeek.Monday, DayOfWeek.Tuesday, DayOfWeek.Wednesday, DayOfWeek.Thursday, DayOfWeek.Friday, DayOfWeek.Saturday, DayOfWeek.Sunday };
 
-    public PlayTimePanel(Window owner, GuardClient client)
+    public PlayTimePanel(Window owner, GuardClient client, Func<StatusDto?> status)
     {
         _owner = owner;
         _client = client;
+        _ = status;
+        _autosave.Tick += async (_, _) => { _autosave.Stop(); await SaveAsync(silent: true); };
         VerticalScrollBarVisibility = ScrollBarVisibility.Auto;
         Content = _root;
     }
@@ -54,7 +60,7 @@ public sealed class PlayTimePanel : ScrollViewer
         }
         catch (Exception e) { Show("Couldn't load the play plans: " + e.Message); return; }
         _profile ??= _plans.FirstOrDefault(p => p.Plan != null)?.Profile ?? _plans.FirstOrDefault(p => p.Profile.Equals("WoW", StringComparison.OrdinalIgnoreCase))?.Profile ?? _plans.FirstOrDefault()?.Profile;
-        _draft = Clone(_plans.FirstOrDefault(p => p.Profile == _profile)?.Plan);
+        if (!_dirty) _draft = Clone(_plans.FirstOrDefault(p => p.Profile == _profile)?.Plan); // never throw away unsaved edits
         Render();
     }
 
@@ -80,15 +86,27 @@ public sealed class PlayTimePanel : ScrollViewer
         var current = _plans.First(p => p.Profile == _profile);
 
         _root.Children.Add(T("Play time", 20, true));
-        _root.Children.Add(T("Decide when a game profile may be active, and for how long. Outside these times NetGuard keeps you in the fallback " +
-                             "profile, and the game itself is blocked in every profile – even in Maintenance. Play time counts while the profile is active. " +
-                             "Stricter changes always apply right away. Looser ones (more time, more windows, higher limits) apply right away only while " +
-                             "no profile is active – during a lock they take 72 hours. So set up and fine-tune your plan before you start a lock.", 13, false, Muted));
+        _root.Children.Add(T("When a game profile may be active, and for how long. Outside these times you're in the fallback profile and the game is blocked " +
+                             "everywhere. " + (LockActive
+                                 ? "A lock is active: stricter changes apply right away, looser ones after 72 hours. Click Save when you're done."
+                                 : "No lock is active, so every change is saved and applies right away."), 13, false, Muted));
 
         var pick = new ComboBox { MinWidth = 200, FontSize = 14, Margin = new Thickness(0, 6, 0, 12), HorizontalAlignment = HorizontalAlignment.Left };
         foreach (var p in _plans) pick.Items.Add(p.Profile);
         pick.SelectedItem = _profile;
-        pick.SelectionChanged += (_, _) => { _profile = pick.SelectedItem as string; _draft = Clone(_plans.First(p => p.Profile == _profile).Plan); Render(); };
+        pick.SelectionChanged += (_, _) =>
+        {
+            if (_dirty && MessageBox.Show(_owner, "You have unsaved changes for " + _profile + ". Throw them away?", "Play time",
+                    MessageBoxButton.YesNo, MessageBoxImage.Question) != MessageBoxResult.Yes)
+            {
+                pick.SelectedItem = _profile;
+                return;
+            }
+            _dirty = false;
+            _profile = pick.SelectedItem as string;
+            _draft = Clone(_plans.First(p => p.Profile == _profile).Plan);
+            Render();
+        };
         _root.Children.Add(pick);
 
         if (current.HasPending)
@@ -116,7 +134,7 @@ public sealed class PlayTimePanel : ScrollViewer
                     FallbackProfile = current.FallbackChoices.FirstOrDefault(f => f.Equals("Offline", StringComparison.OrdinalIgnoreCase)) ?? current.FallbackChoices.FirstOrDefault() ?? "Offline",
                 }
                 : null;
-            Render();
+            Changed();
         };
         _root.Children.Add(use);
 
@@ -127,10 +145,15 @@ public sealed class PlayTimePanel : ScrollViewer
             _root.Children.Add(Card(Games(current)));
         }
 
-        var save = Btn("Save play plan", true);
-        save.Margin = new Thickness(0, 12, 0, 0);
-        save.Click += async (_, _) => await SaveAsync();
-        _root.Children.Add(save);
+        if (LockActive)
+        {
+            var save = _saveButton = Btn(_dirty ? "Save changes" : "Saved", true);
+            save.IsEnabled = _dirty;
+            save.Margin = new Thickness(0, 12, 0, 0);
+            save.Click += async (_, _) => await SaveAsync(silent: false);
+            _root.Children.Add(save);
+            if (_dirty) _status.Text = "⚠ Unsaved changes.";
+        }
         _root.Children.Add(_status);
     }
 
@@ -166,7 +189,7 @@ public sealed class PlayTimePanel : ScrollViewer
                 var w = new PlayWindow { Day = d, Start = (string)from.SelectedItem, End = (string)to.SelectedItem == "24:00" ? "24:00" : (string)to.SelectedItem };
                 if (w.EndMinute <= w.StartMinute) { _status.Text = "The end has to be after the start."; return; }
                 _draft!.Windows.Add(w);
-                Render();
+                Changed();
             };
             add.Children.Add(from);
             add.Children.Add(new TextBlock { Text = "–", VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(4, 0, 0, 0) });
@@ -186,7 +209,7 @@ public sealed class PlayTimePanel : ScrollViewer
                     Style = (Style)Application.Current.FindResource("Secondary"),
                 };
                 var ww = w;
-                chip.Click += (_, _) => { _draft.Windows.Remove(ww); Render(); };
+                chip.Click += (_, _) => { _draft.Windows.Remove(ww); Changed(); };
                 chips.Children.Add(chip);
             }
             row.Children.Add(chips);
@@ -212,11 +235,11 @@ public sealed class PlayTimePanel : ScrollViewer
 
         sp.Children.Add(T("Per day", 13));
         var daily = Limit(_draft!.DailyLimitMinutes, Enumerable.Range(1, 16).Select(i => i * 30), H);
-        daily.SelectionChanged += (_, _) => _draft.DailyLimitMinutes = (int?)((ComboBoxItem)daily.SelectedItem).Tag;
+        daily.SelectionChanged += (_, _) => { _draft.DailyLimitMinutes = (int?)((ComboBoxItem)daily.SelectedItem).Tag; Changed(render: false); };
         sp.Children.Add(daily);
         sp.Children.Add(T("Per week", 13));
         var weekly = Limit(_draft.WeeklyLimitMinutes, Enumerable.Range(1, 40).Select(i => i * 60), H);
-        weekly.SelectionChanged += (_, _) => _draft.WeeklyLimitMinutes = (int?)((ComboBoxItem)weekly.SelectedItem).Tag;
+        weekly.SelectionChanged += (_, _) => { _draft.WeeklyLimitMinutes = (int?)((ComboBoxItem)weekly.SelectedItem).Tag; Changed(render: false); };
         sp.Children.Add(weekly);
         sp.Children.Add(T("When the time is up you get warnings at 15, 5 and 1 minute; then NetGuard switches. Once a day you can take 10 extra minutes – " +
                           "they come off the next day.", 12, false, Muted));
@@ -236,12 +259,13 @@ public sealed class PlayTimePanel : ScrollViewer
             {
                 _draft.GamePrograms.RemoveAll(g => g.Equals(name, StringComparison.OrdinalIgnoreCase));
                 if (cb.IsChecked == true) _draft.GamePrograms.Add(name);
+                Changed(render: false);
             };
             sp.Children.Add(cb);
         }
         sp.Children.Add(T("Outside play time, switch to", 13));
         var fb = new ComboBox { ItemsSource = current.FallbackChoices, SelectedItem = _draft!.FallbackProfile, Width = 200, HorizontalAlignment = HorizontalAlignment.Left };
-        fb.SelectionChanged += (_, _) => _draft.FallbackProfile = (string)fb.SelectedItem;
+        fb.SelectionChanged += (_, _) => { _draft.FallbackProfile = (string)fb.SelectedItem; Changed(render: false); };
         sp.Children.Add(fb);
         return sp;
     }
@@ -253,11 +277,38 @@ public sealed class PlayTimePanel : ScrollViewer
         return $"{days}; per day {(p.DailyLimitMinutes is { } d ? $"{d} min" : "unlimited")}, per week {(p.WeeklyLimitMinutes is { } w2 ? $"{w2 / 60} h" : "unlimited")}.";
     }
 
-    private async Task SaveAsync()
+    private void Changed(bool render = true)
     {
-        if (MessageBox.Show(_owner, $"Save this play plan for {_profile}?\n\n{Describe(_draft)}\n\nWhile no profile is active it applies right away. During a lock, a looser plan only takes effect in 72 hours.",
+        _dirty = true;
+        if (!LockActive)
+        {
+            _status.Text = "Saving…";
+            _autosave.Stop();
+            _autosave.Start();
+        }
+        if (render) Render();
+        else if (LockActive && _saveButton != null)
+        {
+            _saveButton.IsEnabled = true;
+            _saveButton.Content = "Save changes";
+            _status.Text = "⚠ Unsaved changes.";
+        }
+    }
+
+    private async Task SaveAsync(bool silent)
+    {
+        if (!silent && MessageBox.Show(_owner, $"Save this play plan for {_profile}?\n\n{Describe(_draft)}\n\nA lock is active: if this is looser than the current plan, it only takes effect in 72 hours.",
                 "Play plan", MessageBoxButton.OKCancel, MessageBoxImage.Question) != MessageBoxResult.OK) return;
-        await Send(new IpcRequest { Command = IpcCommands.PlanSet, Profile = _profile, Plan = _draft });
+        string msg;
+        try
+        {
+            msg = (await _client.CallAsync(new IpcRequest { Command = IpcCommands.PlanSet, Profile = _profile, Plan = _draft })).Text ?? "";
+            _dirty = false;
+            if (silent) msg = "✓ Saved – applies right away.";
+        }
+        catch (Exception e) { msg = "Not saved: " + e.Message; }
+        await RefreshAsync();
+        _status.Text = msg;
     }
 
     private async Task Send(IpcRequest req)

@@ -14,7 +14,7 @@ How it holds:
 Your way out in an emergency:
 - The setup wizard creates a recovery code. Write it on paper and keep it somewhere
   inconvenient. It ends any lock immediately (Start menu: "NetGuard Emergency Restore").
-- Uninstalling (from inside NetGuard: Tools -> Uninstall NetGuard) always leaves the PC with
+- Uninstalling (from inside NetGuard: Settings -> Advanced -> Uninstall NetGuard) always leaves the PC with
   normal internet.
 
 Nothing is locked right after installing. You decide when to start.
