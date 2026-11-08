@@ -73,6 +73,7 @@ public sealed class Guard
                 if (state.TestMode is { } tm && tm.DeadlineUtc <= DateTimeOffset.UtcNow)
                 {
                     TestMode.End(_engine, ServiceActor, endedEarly: false);
+                    Protect();
                     return;
                 }
 
@@ -109,29 +110,54 @@ public sealed class Guard
 
     public static string ProgramDir => Path.GetDirectoryName(Environment.ProcessPath ?? AppContext.BaseDirectory)!;
 
-    private bool _protectionRelaxed;
+    private bool _uninstallPrepared;
+    private bool _protectionOn;
 
-    /// <summary>Make sure the service, its registry key and folders are protected from administrators.</summary>
+    /// <summary>
+    /// Self-protection follows the lock: while a lock is active, NetGuard's service, registry key and
+    /// folders are protected from administrators. With normal internet there's nothing to protect,
+    /// so NetGuard can be updated, repaired or uninstalled like any other program.
+    /// </summary>
     public void Protect()
     {
         lock (_gate)
         {
-            if (_protectionRelaxed) return;
+            if (_uninstallPrepared) return;
             try
             {
                 if (!Directory.Exists(_engine.Paths.DataDir)) DataDirSecurity.Secure(_engine.Paths);
-                var changed = SelfProtection.Apply(_engine.Paths, ProgramDir);
-                if (changed.Count > 0)
-                    _logger.LogInformation("Self-protection (re)applied: {Changed}", string.Join(", ", changed));
-                var failed = changed.Where(c => c.Contains("FAILED")).ToList();
-                if (failed.Count > 0)
-                    _engine.Log.Append(LogTypes.ApplyError, new { request = "self-protection", errors = failed }, ServiceActor);
+                var locked = _engine.LoadState().ActiveProfile != null;
+                if (locked)
+                {
+                    var changed = SelfProtection.Apply(_engine.Paths, ProgramDir);
+                    if (changed.Count > 0) _logger.LogInformation("Self-protection applied: {Changed}", string.Join(", ", changed));
+                    var failed = changed.Where(c => c.Contains("FAILED")).ToList();
+                    if (failed.Count > 0) ReportServiceError("self-protection", string.Join("; ", failed));
+                }
+                else
+                {
+                    SelfProtection.Relax(_engine.Paths, ProgramDir);
+                }
+                _protectionOn = locked;
             }
             catch (Exception e)
             {
                 _logger.LogError(e, "Self-protection failed");
+                ReportServiceError("self-protection", e.Message);
             }
         }
+    }
+
+    private readonly HashSet<string> _reportedErrors = new();
+
+    /// <summary>Write a service-side problem to NetGuard's history (once per distinct message).</summary>
+    public void ReportServiceError(string where, string message)
+    {
+        lock (_reportedErrors)
+        {
+            if (!_reportedErrors.Add(where + message) || _reportedErrors.Count > 50) return;
+        }
+        try { _engine.Log.Append(LogTypes.ApplyError, new { request = where, errors = new[] { message } }, ServiceActor); } catch { }
     }
 
     // ================================================================ requests from the app
@@ -147,7 +173,7 @@ public sealed class Guard
                     IpcCommands.Status => new IpcResponse { Ok = true, Status = BuildStatus(caller) },
                     IpcCommands.StatusText => IpcResponse.Success(
                         $"Service:          running (version {GitHubReleases.CurrentVersion}), last check {LastCheckUtc?.ToLocalTime():T}\n" +
-                        $"Self-protection:  {(SelfProtection.IsServiceHardened() ? "on" : "OFF")}\n" +
+                        $"Self-protection:  {(SelfProtection.IsServiceHardened() ? "on (a lock is active)" : "standby (only while a lock is active)")}\n" +
                         StatusReader.Read(_engine).Describe()),
                     IpcCommands.Switch => Switch(req, caller),
                     IpcCommands.TestStart => TestStart(req, caller),
@@ -220,7 +246,7 @@ public sealed class Guard
             CallerName = caller.Name,
             RecoveryCodeExists = RecoveryCode.Exists(state),
             RecoveryCodeCreatedUtc = state.RecoveryCodeCreatedUtc,
-            SelfProtectionActive = !_protectionRelaxed,
+            SelfProtectionActive = _protectionOn,
         };
         if (cfg == null) return dto;
 
@@ -259,6 +285,7 @@ public sealed class Guard
         // A permanent lock must not be undone by a leftover test-mode safety task.
         DeadManSwitch.Disarm();
         var (desired, _, result) = _engine.ApplyProfile(cfg, target, caller.Name, null);
+        Protect();
         return result.Success
             ? IpcResponse.Success($"{desired.ProfileName} is now active.\n\n" + Report.Result(result))
             : IpcResponse.Fail(Report.Result(result));
@@ -272,6 +299,7 @@ public sealed class Guard
         if (!decision.Allowed) return Refuse(caller, req, decision.Reason);
         var minutes = req.Minutes ?? cfg.Timings.TestModeMinutes;
         var (info, result) = TestMode.Start(_engine, cfg, req.Profile ?? throw new ArgumentException("Which profile?"), minutes, caller.Name);
+        Protect();
         return IpcResponse.Success(
             $"Test lock until {info.DeadlineUtc.ToLocalTime():T}. A separate safety task also restores internet shortly after that.\n\n" +
             Report.Result(result));
@@ -282,6 +310,7 @@ public sealed class Guard
         var state = _engine.LoadState();
         if (state.ActiveProfile == null || state.TestMode == null) return IpcResponse.Fail("No test lock is running.");
         var result = TestMode.End(_engine, caller.Name, endedEarly: true);
+        Protect();
         return IpcResponse.Success("Normal internet is back.\n\n" + Report.Result(result));
     }
 
@@ -291,6 +320,7 @@ public sealed class Guard
         if (_engine.LoadState().ActiveProfile != null && CheckCode(req, caller) is { } refused) return refused;
         var (plan, result) = _engine.Recover("emergency restore with recovery code", caller.Name);
         try { DeadManSwitch.Disarm(); } catch { }
+        Protect();
         return IpcResponse.Success(Report.Plan(plan) + "\n" + Report.Result(result) + (result.Success ? "\nNormal internet is back." : ""));
     }
 
@@ -332,7 +362,7 @@ public sealed class Guard
         DataDirSecurity.Secure(_engine.Paths);
         cfg.Save(_engine.Paths.ConfigFile);
         _engine.Log.Append(LogTypes.ConfigCreated, new { detected = d }, caller.Name);
-        SelfProtection.Apply(_engine.Paths, ProgramDir);
+        Protect();
         return IpcResponse.Success(Report.Detected(d) + $"\nConfiguration saved.\n\nNext: step 3, create your recovery code.");
     }
 
@@ -410,7 +440,7 @@ public sealed class Guard
 
         _engine.Recover("preparing to uninstall", caller.Name);
         try { DeadManSwitch.Disarm(); } catch { }
-        _protectionRelaxed = true;
+        _uninstallPrepared = true;
         SelfProtection.Relax(_engine.Paths, ProgramDir);
         ProcessRunner.Run("sc.exe", $"config {ServiceControl.ServiceName} start= demand");
         ProcessRunner.Run("sc.exe", $"failure {ServiceControl.ServiceName} reset= 0 actions= \"\"");

@@ -25,8 +25,9 @@ public sealed class PipeServer : BackgroundService
     private static PipeSecurity CreateSecurity()
     {
         var ps = new PipeSecurity();
+        // Clients open the pipe for GENERIC_READ|GENERIC_WRITE, which includes SYNCHRONIZE – without it, Windows refuses the connection.
         ps.AddAccessRule(new PipeAccessRule(new SecurityIdentifier(WellKnownSidType.AuthenticatedUserSid, null),
-            PipeAccessRights.ReadWrite, AccessControlType.Allow));
+            PipeAccessRights.ReadWrite | PipeAccessRights.Synchronize, AccessControlType.Allow));
         ps.AddAccessRule(new PipeAccessRule(new SecurityIdentifier(WellKnownSidType.LocalSystemSid, null),
             PipeAccessRights.FullControl, AccessControlType.Allow));
         ps.AddAccessRule(new PipeAccessRule(new SecurityIdentifier(WellKnownSidType.BuiltinAdministratorsSid, null),
@@ -54,6 +55,7 @@ public sealed class PipeServer : BackgroundService
             catch (Exception e)
             {
                 _logger.LogError(e, "Pipe server error");
+                _guard.ReportServiceError("pipe-server", e.Message);
                 await Task.Delay(1000, ct).ContinueWith(_ => { });
             }
             finally
@@ -95,18 +97,15 @@ public sealed class PipeServer : BackgroundService
             catch (Exception e)
             {
                 _logger.LogError(e, "Error while handling a client");
+                _guard.ReportServiceError("pipe", e.Message);
             }
         }
     }
 
+    /// <summary>Who is asking – for the log only; nothing depends on it.</summary>
     private static CallerInfo IdentifyCaller(NamedPipeServerStream pipe)
     {
-        CallerInfo? caller = null;
-        pipe.RunAsClient(() =>
-        {
-            using var id = WindowsIdentity.GetCurrent(TokenAccessLevels.Query);
-            caller = new CallerInfo(id.Name);
-        });
-        return caller ?? new CallerInfo("unknown");
+        try { return new CallerInfo(pipe.GetImpersonationUserName()); }
+        catch { return new CallerInfo("unknown user"); }
     }
 }

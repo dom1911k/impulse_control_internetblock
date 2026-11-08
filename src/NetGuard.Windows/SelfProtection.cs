@@ -46,12 +46,14 @@ public static class SelfProtection
     }
 
     /// <summary>Give administrators full control back (only for an allowed uninstall).</summary>
-    public static void Relax(NetGuardPaths paths, string programDir)
+    public static List<string> Relax(NetGuardPaths paths, string programDir)
     {
-        SetServiceSddl(DefaultSddl);
-        SetRegistryKey(hardened: false);
-        SetFolder(programDir, hardened: false, isDataDir: false, paths);
-        SetFolder(paths.DataDir, hardened: false, isDataDir: true, paths);
+        var changed = new List<string>();
+        Try(changed, "service permissions", () => SetServiceSddl(DefaultSddl));
+        Try(changed, "service registry key", () => SetRegistryKey(hardened: false));
+        Try(changed, "program folder", () => SetFolder(programDir, hardened: false, isDataDir: false, paths));
+        Try(changed, "data folder", () => SetFolder(paths.DataDir, hardened: false, isDataDir: true, paths));
+        return changed;
     }
 
     public static bool IsServiceHardened()

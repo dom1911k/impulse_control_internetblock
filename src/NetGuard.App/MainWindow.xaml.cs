@@ -23,6 +23,7 @@ public partial class MainWindow : Window
     private readonly DispatcherTimer _timer = new() { Interval = TimeSpan.FromSeconds(1) };
     private StatusDto? _status;
     private bool _serviceDown;
+    private string _serviceProblem = "";
     private bool _busy;
     private bool _refreshing;
     private int _tick;
@@ -71,14 +72,17 @@ public partial class MainWindow : Window
             _status = r.Status;
             _serviceDown = false;
         }
-        catch (GuardClient.ServiceUnavailableException)
+        catch (GuardClient.ServiceUnavailableException ex)
         {
             _status = null;
             _serviceDown = true;
+            _serviceProblem = ex.Message;
         }
         catch (Exception ex)
         {
-            StatusDetail.Text = "Could not ask the service: " + ex.Message;
+            _status = null;
+            _serviceDown = true;
+            _serviceProblem = "Could not ask the service: " + ex.Message;
         }
         finally
         {
@@ -91,8 +95,11 @@ public partial class MainWindow : Window
     {
         if (_serviceDown || _status == null)
         {
-            StatusTitle.Text = "Protection service isn't running";
-            StatusDetail.Text = "NetGuard can't enforce or repair anything right now. Run NetGuardSetup.exe to install or repair it.";
+            var running = SafeServiceState().StartsWith("running");
+            StatusTitle.Text = running ? "Can't reach the protection service" : "Protection service isn't running";
+            StatusDetail.Text = running
+                ? $"{_serviceProblem} Please send a screenshot of this to whoever helps you with NetGuard."
+                : "NetGuard can't enforce or repair anything right now. Run NetGuardSetup.exe to install or repair it.";
             Banner.Background = Brush("#7A2E2E");
             CountdownPanel.Visibility = Visibility.Collapsed;
             ServiceText.Text = $"Service: {SafeServiceState()}.";
@@ -101,7 +108,7 @@ public partial class MainWindow : Window
             return;
         }
 
-        ServiceText.Text = $"Running (version {_status.ServiceVersion}), self-protection {(_status.SelfProtectionActive ? "on" : "off")}. " +
+        ServiceText.Text = $"Running (version {_status.ServiceVersion}), self-protection {(_status.SelfProtectionActive ? "on" : "on standby until a lock starts")}. " +
                            $"Last check {_status.LastCheckUtc?.ToLocalTime():T}." +
                            (_status.LastTamperUtc is { } t ? $"\nLast repair of a change: {t.ToLocalTime():g}." : "");
         RecoveryStateText.Text = _status.RecoveryCodeExists

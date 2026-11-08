@@ -30,6 +30,10 @@ public sealed class GuardClient
         {
             throw new ServiceUnavailableException("The NetGuard service isn't running.", e);
         }
+        catch (UnauthorizedAccessException e)
+        {
+            throw new ServiceUnavailableException("The NetGuard service is running but refused the connection (access denied).", e);
+        }
 
         using var writer = new StreamWriter(pipe, leaveOpen: true) { AutoFlush = true, NewLine = "\n" };
         using var reader = new StreamReader(pipe, leaveOpen: true);

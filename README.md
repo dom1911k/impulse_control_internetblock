@@ -47,8 +47,9 @@ Rocksmith works in Steam Offline Mode.
   *tamper*. The window app runs with normal rights and sends requests over the `NetGuard` named
   pipe; the service decides. Stricter profiles are instant; looser ones need the recovery code
   (milestone 4 adds the cooldown process).
-* **Single-account self-protection.** The user's everyday account stays an administrator, so the
-  service protects itself from administrators: service DACL (no stop/config/delete), its registry
+* **Single-account self-protection.** The user's everyday account stays an administrator, so while
+  a lock is active the service protects itself from administrators (with normal internet it stands
+  by, so installing/updating/uninstalling works normally): service DACL (no stop/config/delete), its registry
   key and its program + data folders are read-only for Administrators and owned by SYSTEM; if the
   process is killed, Windows restarts it after 2 s (forever). Updates are installed by the service
   itself; uninstalling goes through the app, which relaxes protection first.

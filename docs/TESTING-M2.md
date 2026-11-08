@@ -4,8 +4,10 @@ What's new:
 - **The NetGuard service** runs in the background as SYSTEM. It holds the lock permanently (also
   across reboots), checks the firewall every 30 seconds and right after any firewall change, and
   undoes tampering.
-- **Self-protection.** Your account stays an administrator, so NetGuard protects its own service,
-  registry key and folders from administrators. They can't stop, reconfigure, delete or edit them.
+- **Self-protection.** Your account stays an administrator, so *while a lock is active* NetGuard
+  protects its own service, registry key and folders from administrators. They can't stop,
+  reconfigure, delete or edit them. With normal internet it's on standby, so NetGuard installs,
+  updates and uninstalls like any program.
 - **Recovery code.** Your emergency key, written on paper. It ends a lock early (until the unlock
   process in milestone 4) and allows uninstalling during a lock.
 
@@ -20,7 +22,7 @@ https://github.com/dom1911k/impulse_control_internetblock/releases/latest
 (use the installer this time, not "Install update" in the old version, because the service needs
 to be installed).
 
-✅ NetGuard opens. **Tools → Protection service** says *Running … self-protection on*.
+✅ NetGuard opens. **Tools → Protection service** says *Running … self-protection on standby until a lock starts*.
 Your configuration from milestone 1 is kept.
 
 ## 1. Recovery code
@@ -47,6 +49,8 @@ click *I've written it down*.
 | Tools → **Emergency restore** → type a **wrong** code | ❌ "not right, 4 attempts left". History shows *Wrong recovery code* |
 
 ## 3. Tampering (all of these must fail or be undone)
+
+Still in the WoW lock from step 2. **Tools → Protection service** should now say *self-protection on*.
 
 Open **PowerShell as administrator** (Start → type `PowerShell` → *Run as administrator* → Yes).
 
@@ -91,6 +95,7 @@ History shows *Normal internet restored – emergency restore with recovery code
 ## 6. Test locks still work
 
 With normal internet: **Test lock** (3 minutes) on WoW → ends by itself.
+Afterwards **Tools → Protection service** says *on standby* again.
 
 ## 7. Update path (only if a newer version than yours is on the Releases page)
 

@@ -101,7 +101,7 @@ begin
       '-NoProfile -NonInteractive -ExecutionPolicy Bypass -Command "Get-Process NetGuard.Service -ErrorAction SilentlyContinue | Stop-Process -Force"',
       '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
   if ServiceRunning then
-    Result := 'NetGuard is running and protects itself, so this installer can''t replace it.' + #13#10#13#10 +
+    Result := 'A NetGuard lock is active and NetGuard protects itself, so this installer can''t replace it.' + #13#10#13#10 +
               'To update: open NetGuard -> Tools -> Check for updates -> Install update.' + #13#10 +
               'To remove it: open NetGuard -> Tools -> Uninstall NetGuard.'
   else
@@ -109,12 +109,18 @@ begin
 end;
 
 function InitializeUninstall: Boolean;
+var
+  ResultCode: Integer;
 begin
   Result := True;
+  // Without an active lock NetGuard doesn't protect itself, so the service simply stops here.
+  Exec('powershell.exe',
+    '-NoProfile -NonInteractive -ExecutionPolicy Bypass -Command "Stop-Service NetGuard -Force -ErrorAction SilentlyContinue"',
+    '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
   if ServiceRunning then
   begin
-    MsgBox('NetGuard protects itself and can only be removed from inside the app:' + #13#10#13#10 +
-           'open NetGuard -> Tools -> Uninstall NetGuard.', mbInformation, MB_OK);
+    MsgBox('A NetGuard lock is active and NetGuard protects itself. It can only be removed from inside the app:' + #13#10#13#10 +
+           'open NetGuard -> Tools -> Uninstall NetGuard (needs your recovery code during a lock).', mbInformation, MB_OK);
     Result := False;
   end;
 end;
