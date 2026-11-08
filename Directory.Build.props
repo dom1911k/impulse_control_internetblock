@@ -7,6 +7,7 @@
     <!-- lets the Windows projects compile on Linux/macOS too (CI and development) -->
     <EnableWindowsTargeting>true</EnableWindowsTargeting>
     <Version>0.1.0</Version>
+    <DebugType>embedded</DebugType>
     <Company>NetGuard</Company>
     <Product>NetGuard</Product>
   </PropertyGroup>

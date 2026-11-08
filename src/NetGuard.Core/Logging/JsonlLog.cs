@@ -13,6 +13,7 @@ public static class LogTypes
     public const string Tamper = "tamper";
     public const string ConfigCreated = "config-created";
     public const string Rejected = "program-rejected";
+    public const string Updated = "updated";
 }
 
 /// <summary>Append-only JSON-lines log (one JSON object per line).</summary>

@@ -6,6 +6,7 @@ using NetGuard.Core.Hosts;
 using NetGuard.Core.Logging;
 using NetGuard.Core.Planning;
 using NetGuard.Core.State;
+using NetGuard.Core.Updates;
 using NetGuard.Windows;
 
 namespace NetGuard.Cli;
@@ -32,6 +33,9 @@ Usage (from an ADMINISTRATOR terminal):
   ngctl diag audit on|off              Turn Windows' logging of blocked connections on/off
   ngctl diag blocked [--minutes N]     List programs whose connections were blocked (default 10 min)
   ngctl log [--tail N]                 Show the last N log entries (default 20)
+  ngctl version                        Show this program's version
+  ngctl update [--check] [--yes]       Download and install the newest ngctl from GitHub Releases
+                                       (--check: only look). Needs normal internet or Maintenance.
 
 Profiles in the default config: Offline, WoW, Maintenance
 """;
@@ -50,9 +54,16 @@ Profiles in the default config: Offline, WoW, Maintenance
     {
         if (args.Length == 0 || args[0] is "help" or "-h" or "--help" or "/?")
         {
+            Console.WriteLine($"ngctl {GitHubReleases.CurrentVersion}");
             Console.WriteLine(Help);
             return 0;
         }
+        if (args[0] is "version" or "--version")
+        {
+            Console.WriteLine($"ngctl {GitHubReleases.CurrentVersion}");
+            return 0;
+        }
+        if (OperatingSystem.IsWindows()) SelfUpdater.CleanupOldExe();
         if (!OperatingSystem.IsWindows()) { Err("ngctl only runs on Windows."); return 1; }
         if (!WinEnv.IsElevatedAdmin())
         {
@@ -75,6 +86,7 @@ Profiles in the default config: Offline, WoW, Maintenance
             "recover" => Recover(engine, a),
             "diag" => Diag(a),
             "log" => ShowLog(engine, a),
+            "update" => Update(engine, a),
             _ => Unknown(a.Command),
         };
     }
@@ -181,6 +193,7 @@ Profiles in the default config: Offline, WoW, Maintenance
         var fw = new ComFirewall().GetSnapshot();
 
         Head("NetGuard status");
+        Line("ngctl version", GitHubReleases.CurrentVersion.ToString());
         Line("Active profile", state.ActiveProfile ?? "none (normal internet)");
         if (state.ActiveSinceUtc is { } since) Line("Active since", since.ToLocalTime().ToString("g"));
         if (state.TestMode is { } tm) Line("Test mode", $"auto-restore at {tm.DeadlineUtc.ToLocalTime():T}");
@@ -339,6 +352,47 @@ Profiles in the default config: Offline, WoW, Maintenance
             if (result.Success) Ok("Normal internet restored.");
         }
         return result.Success ? 0 : 1;
+    }
+
+    // ------------------------------------------------------------------ update
+
+    private static int Update(Engine engine, Args a)
+    {
+        var state = engine.LoadState();
+        if (state.TestMode is { } tm && tm.DeadlineUtc > DateTimeOffset.UtcNow)
+        {
+            Err("A test-mode lock is running. Let it finish (or 'ngctl recover') before updating.");
+            return 1;
+        }
+
+        var current = GitHubReleases.CurrentVersion;
+        Head("Update");
+        Line("Installed", current.ToString());
+        Console.WriteLine("  Checking " + GitHubReleases.ReleasesPage + " …");
+        var latest = SelfUpdater.CheckLatest();
+        Line("Newest release", $"{latest.Version}" + (latest.Published is { } p ? $"  ({p.ToLocalTime():g})" : ""));
+
+        if (latest.Version <= current)
+        {
+            Ok("You already have the newest version.");
+            return 0;
+        }
+        if (!string.IsNullOrWhiteSpace(latest.Notes))
+        {
+            Console.WriteLine("  What's new:");
+            foreach (var l in latest.Notes.Split('\n').Take(15)) Console.WriteLine("    " + l.TrimEnd());
+        }
+        if (a.Has("--check"))
+        {
+            Ok($"Version {latest.Version} is available. Run 'ngctl update' to install it.");
+            return 0;
+        }
+        if (!a.Has("--yes") && !Confirm($"Type YES to update to {latest.Version}")) return 1;
+
+        var r = SelfUpdater.Install(latest);
+        engine.Log.Append(LogTypes.Updated, new { from = current.ToString(), to = latest.Version.ToString(), release = latest.HtmlUrl }, WinEnv.CurrentUser());
+        Ok(r.Message + " Run 'ngctl version' to confirm.");
+        return 0;
     }
 
     // ------------------------------------------------------------------ diag / log

@@ -5,9 +5,16 @@ on:
   pull_request:
   workflow_dispatch:
 
+permissions:
+  contents: write   # needed to publish GitHub Releases
+
 jobs:
   build:
     runs-on: windows-latest
+    env:
+      # Every CI build gets a unique, increasing version: 0.1.<run number>.
+      # ngctl compares this with the newest release to decide whether to update.
+      NG_VERSION: 0.1.${{ github.run_number }}
     steps:
       - uses: actions/checkout@v4
 
@@ -19,16 +26,38 @@ jobs:
         run: dotnet test tests/NetGuard.Core.Tests -c Release
 
       - name: Publish ngctl.exe (self-contained, single file)
-        run: dotnet publish src/NetGuard.Cli -c Release -o publish/ngctl
+        run: dotnet publish src/NetGuard.Cli -c Release -o publish/ngctl -p:Version=${{ env.NG_VERSION }}
 
-      - name: Add docs
+      - name: Package
         shell: pwsh
         run: |
           Copy-Item docs/TESTING-M1.md publish/ngctl/
           Copy-Item docs/RECOVERY.md publish/ngctl/
+          Get-ChildItem publish/ngctl -Filter *.pdb | Remove-Item
+          Compress-Archive -Path publish/ngctl/* -DestinationPath NetGuard-ngctl-win-x64.zip
+          $hash = (Get-FileHash NetGuard-ngctl-win-x64.zip -Algorithm SHA256).Hash.ToLower()
+          "$hash  NetGuard-ngctl-win-x64.zip" | Out-File -Encoding ascii -NoNewline NetGuard-ngctl-win-x64.zip.sha256
 
       - uses: actions/upload-artifact@v4
         with:
           name: NetGuard-ngctl-win-x64
           path: publish/ngctl/
           retention-days: 30
+
+      # Pushes publish a release, so the newest build can be downloaded without signing in,
+      # and 'ngctl update' can find it.
+      - name: Publish GitHub Release
+        if: github.event_name == 'push'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ env.NG_VERSION }}
+          name: NetGuard ${{ env.NG_VERSION }}
+          target_commitish: ${{ github.sha }}
+          body: |
+            Build ${{ env.NG_VERSION }} from branch `${{ github.ref_name }}` (commit ${{ github.sha }}).
+
+            ${{ github.event.head_commit.message }}
+          files: |
+            NetGuard-ngctl-win-x64.zip
+            NetGuard-ngctl-win-x64.zip.sha256
+          make_latest: true

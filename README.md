@@ -65,6 +65,22 @@ docs/                    TESTING-M1.md, RECOVERY.md
 Coming next: `NetGuard.Service` (milestone 2), `NetGuard.Tray` (3), cooldown/commitments (4),
 `installer/` (5).
 
+## Updating
+
+Every push builds a numbered release (`v0.1.<build>`) on the
+[Releases page](https://github.com/dom1911k/impulse_control_internetblock/releases).
+In an admin terminal:
+
+```powershell
+.\ngctl update
+```
+
+It downloads only from this repository's releases, verifies the SHA-256 checksum published with the
+release, swaps the exe (the old one is renamed and cleaned up on the next start), and logs the
+update. During a lock, ngctl itself has no internet, so updating only works with normal internet or
+in Maintenance. That's intentional. From milestone 3 the tray app will show "update available",
+and from milestone 5 updates will go through the installer.
+
 ## Building
 
 The GitHub Actions workflow builds everything on Windows and publishes `ngctl.exe` as an artifact.

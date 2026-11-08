@@ -11,8 +11,8 @@ only has internet for WoW, Battle.net and Spotify.
 
 ## 0. Get ngctl.exe
 
-1. On GitHub, open the repository → **Actions** → the latest green **build** run for branch
-   `claude/ecstatic-johnson-a2zmg3` → at the bottom, **Artifacts** → download **NetGuard-ngctl-win-x64**.
+1. Open https://github.com/dom1911k/impulse_control_internetblock/releases (no sign-in needed) and,
+   under the newest release, download **NetGuard-ngctl-win-x64.zip**.
 2. Create the folder `C:\NetGuard-test` and unzip the download into it.
    Use exactly this folder (not Downloads): in test mode a SYSTEM task runs ngctl from here.
 3. Open **Terminal as administrator** (Start → type `Terminal` → right-click → *Run as administrator*) and run:
@@ -22,6 +22,10 @@ only has internet for WoW, Battle.net and Spotify.
    ```
 
 If Windows says the file is blocked: right-click `ngctl.exe` → Properties → tick **Unblock** → OK.
+
+**Later updates:** with normal internet (no lock active), run `.\ngctl update`. It checks the
+Releases page, shows what's new, verifies the download's checksum, and replaces itself.
+`.\ngctl update --check` only looks. `.\ngctl version` shows what you have.
 
 ## 1. Detect your apps
 
