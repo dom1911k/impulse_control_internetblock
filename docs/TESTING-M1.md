@@ -1,97 +1,59 @@
 # Milestone 1 – test sheet
 
-What you're testing: the core engine. It turns a profile into Windows Firewall rules, prints exactly
-what it would do (`--dry-run`), and in **test mode** restores normal internet by itself.
-There is no service, tray app or cooldown yet. That's milestones 2–4.
+What you're testing: the core engine. NetGuard turns a profile into Windows Firewall rules, shows
+exactly what it would change (**Preview**), and in **test mode** restores normal internet by itself.
+There's no background service, cooldown or tray icon yet. Those are milestones 2–4.
 
-Expect about 30–40 minutes. Keep this page open on your phone, because during the test your PC
-only has internet for WoW, Battle.net and Spotify.
+Expect about 30–40 minutes. Keep this page open on your phone, because during the test your PC only
+has internet for WoW, Battle.net and Spotify.
 
 ---
 
-## 0. Get ngctl.exe
+## 0. Install
 
-1. Open https://github.com/dom1911k/impulse_control_internetblock/releases (no sign-in needed) and,
-   under the newest release, download **NetGuard-ngctl-win-x64.zip**.
-2. Create the folder `C:\NetGuard-test` and unzip the download into it.
-   Use exactly this folder (not Downloads): in test mode a SYSTEM task runs ngctl from here.
-3. Open **Terminal as administrator** (Start → type `Terminal` → right-click → *Run as administrator*) and run:
+1. Open https://github.com/dom1911k/impulse_control_internetblock/releases/latest
+   (no sign-in needed) and download **NetGuardSetup.exe**.
+2. Run it. Windows will probably warn you because the file isn't code-signed:
+   **More info → Run anyway**. Then click through the installer.
+3. Start **NetGuard** from the Start menu. Windows asks for administrator permission; say **Yes**.
+   NetGuard needs it to change the firewall.
 
-   ```powershell
-   cd C:\NetGuard-test
-   ```
+**Updates later:** NetGuard → **Tools** → **Check for updates** → **Install update**.
+This only works with normal internet, not during a lock.
 
-If Windows says the file is blocked: right-click `ngctl.exe` → Properties → tick **Unblock** → OK.
+## 1. Setup tab
 
-**Later updates:** with normal internet (no lock active), run `.\ngctl update`. It checks the
-Releases page, shows what's new, verifies the download's checksum, and replaces itself.
-`.\ngctl update --check` only looks. `.\ngctl version` shows what you have.
+1. Click **Find apps**. ✅ The Details box at the bottom lists your WoW folder, Battle.net, the
+   Blizzard Agent folder, `Spotify.exe` under `C:\Users\<you>\AppData\Roaming\Spotify`, and Steam.
+   If "Spotify (Store)" lists anything, tell me.
+2. Click **Create configuration**.
+3. Click **Show allowed files**. ✅ Under *Profile WoW* you see `+` lines for `Wow.exe` (and
+   `WowClassic.exe` if installed), several Battle.net files, `Agent.exe` and `Spotify.exe`, each
+   `[signed by …]`. ❗ Any `x … REJECTED` line for a Blizzard or Spotify file: send me that line.
 
-## 1. Detect your apps
+## 2. Preview (changes nothing)
 
-```powershell
-.\ngctl detect
-```
-
-✅ Check: it finds your WoW folder, Battle.net, the Blizzard Agent folder, `Spotify.exe` under
-`C:\Users\<you>\AppData\Roaming\Spotify`, and Steam. If Spotify (Store) shows anything, tell me.
-
-## 2. Create the config
-
-```powershell
-.\ngctl init
-```
-
-✅ Check: "Config written to C:\ProgramData\NetGuard\config.json".
-
-## 3. See which exact files will be allowed
-
-```powershell
-.\ngctl programs WoW
-```
-
-✅ Check: you see `+` lines for `Wow.exe` (and `WowClassic.exe` if installed), several Battle.net
-files, `Agent.exe` and `Spotify.exe`, each `[signed by …]`.
-❗ Any red `x … REJECTED` line for a Blizzard or Spotify file: send me that line.
-
-## 4. Dry run (changes nothing)
-
-```powershell
-.\ngctl apply WoW --dry-run
-```
-
-✅ Check: it ends with **DRY RUN – nothing was changed.** The change list should show:
+**Profiles** tab → on the **WoW** card click **Preview**. The Details box should list:
 - default OUTBOUND → BLOCK for Domain, Private, Public
-- `Add rule NetGuard:WoW:…` for each allowed program, plus `dns-udp`, `dns-tcp`, `time-sync`, `connectivity-check`
+- `Add rule NetGuard:WoW:…` for each allowed program, plus `dns-udp`, `dns-tcp`, `time-sync`,
+  `connectivity-check`
 - `Add rule NetGuard:Always:steam.exe` etc. as **BLOCK**
-- `Disable non-NetGuard allow rule …` for a few dozen built-in Windows rules (expected: these would leak otherwise)
-- the hosts-file line for the Steam websites
+- `Disable non-NetGuard allow rule …` for a few dozen built-in Windows rules (expected: these
+  would let other programs through otherwise)
+- a hosts-file line for the Steam websites
 
-Then:
+and end with **"This was only a preview – nothing was changed."**
 
-```powershell
-.\ngctl status
-```
+## 3. Optional: record blocked connections
 
-✅ Check: "Active profile: none (normal internet)", "NetGuard rules 0", default outbound ALLOW.
+**Tools** → **Start recording**. This makes troubleshooting in step 5 much easier.
 
-## 5. Optional: record blocked connections
+## 4. Test A – 3-minute automatic end
 
-This makes step 7 much easier to troubleshoot:
+Close Battle.net, WoW, Spotify, Steam, Discord and browsers first.
+**Profiles** → Test length **3 minutes** → **WoW** card → **Start test lock** → OK.
 
-```powershell
-.\ngctl diag audit on
-```
-
-## 6. Test A – 3-minute automatic revert
-
-Close Battle.net, WoW, Spotify, Steam, Discord and browsers first. Then:
-
-```powershell
-.\ngctl apply WoW --test-mode
-```
-
-Type `YES`. Within those 3 minutes:
+The top banner turns blue: *"WoW mode"*, with a countdown. Within those 3 minutes:
 
 | Check | Expected |
 |---|---|
@@ -99,81 +61,56 @@ Type `YES`. Within those 3 minutes:
 | Start Spotify, play a song you haven't downloaded | ✅ plays |
 | Start Battle.net | ✅ logs in / shows online |
 
-Then **don't touch anything**. The countdown reaches 0.
+Then don't touch anything. ✅ When the countdown reaches 0, the banner goes back to
+*"Normal internet"* and the browser works again.
 
-✅ Expected: "Normal internet restored." The browser works again.
+## 5. Test B – the full WoW check (10 minutes)
 
-## 7. Test B – the full WoW check (10 minutes)
-
-```powershell
-.\ngctl apply WoW --test-mode --minutes 10
-```
+Test length **10 minutes** → **WoW** → **Start test lock**.
 
 | Check | Expected |
 |---|---|
 | Battle.net → Play WoW, log in, enter the world, move around | ✅ works |
 | Spotify keeps playing | ✅ |
 | Chrome / Edge / Firefox | ❌ no connection |
-| Steam (start it) | ❌ goes offline / can't connect. Offline Mode / Rocksmith still launches |
+| Steam (start it) | ❌ can't connect. Offline Mode / Rocksmith still launches |
 | Discord | ❌ can't connect |
-| `https://store.steampowered.com` in a browser | ❌ (blocked twice: browser + hosts file) |
+| `https://store.steampowered.com` in a browser | ❌ |
 
-While it runs, open a **second** admin terminal and run:
+While it runs: **Tools** → **Show status**. ✅ "Active profile: WoW", and at the bottom
+"In sync: the firewall matches the active profile."
 
-```powershell
-cd C:\NetGuard-test
-.\ngctl status
-```
+If something that should work doesn't (e.g. Battle.net can't log in): **Tools** →
+**Show blocked (last 10 min)**. Send me that list; it shows exactly which program was blocked.
 
-✅ Expected: Active profile WoW, test-mode deadline shown, "In sync".
+End it early with **Restore internet now** in the banner, or let it run out.
 
-If something that should work doesn't (e.g. Battle.net can't log in), run this in the second window:
+## 6. Test C – the safety net works even if NetGuard is closed
 
-```powershell
-.\ngctl diag blocked --minutes 5
-```
+Test length **3 minutes** → **Offline** card → **Start test lock**. Then close the NetGuard window
+and choose **No – close anyway**. The browser should be dead.
 
-Send me the output. It lists which programs got blocked.
-
-Press **R** in the first window to finish early, or let it run out.
-
-## 8. Test C – the safety net works without ngctl
-
-```powershell
-.\ngctl apply Offline --test-mode
-```
-
-Type `YES`, then **close the terminal window** (click X). The browser should be dead.
 Wait 3½ minutes. ✅ Expected: internet comes back by itself, about 30 s after the deadline.
+Open NetGuard again: ✅ banner says *"Normal internet"*, and **History** shows the test lock ending.
 
-Then, in a new admin terminal:
+## 7. Report back
 
-```powershell
-cd C:\NetGuard-test
-.\ngctl status
-```
-
-✅ Expected: "Active profile: none", "Dead-man task: not present", "NetGuard rules 0".
-
-## 9. Clean up and report
-
-```powershell
-.\ngctl diag audit off
-```
-
-```powershell
-.\ngctl log
-```
-
-Send me:
-1. the output of `ngctl detect` and `ngctl programs WoW` (you can blank out your user name)
+**Tools** → **Stop recording**. Then send me:
+1. what **Find apps** and **Show allowed files** showed (you can blank out your user name)
 2. ✅/❌ for each check in tests A, B and C
-3. the `ngctl log` output
-4. anything that felt confusing
+3. a screenshot of the **History** tab
+4. anything that looked wrong, confusing or ugly in the window
 
 ## If anything goes wrong
 
-Run `.\ngctl recover` in an admin terminal. If that fails, see `RECOVERY.md` (3 PowerShell commands).
-Rebooting during test mode also restores internet, because the safety task runs at boot.
+- NetGuard → **Tools** → **Restore normal internet…**
+- or restart the PC: during a test lock, the safety task restores internet at boot
+- or Start menu → **NetGuard Recovery (manual steps)**: 3 PowerShell commands
+- Uninstalling NetGuard (Settings → Apps) always restores normal internet too.
 
-⚠️ Don't use `--permanent` yet. It has no automatic revert, and there's no service to guard it yet.
+## For experts: the console tool
+
+`ngctl.exe` is installed next to `NetGuard.exe` in `C:\Program Files\NetGuard` and does the same
+things from an admin terminal: `ngctl status`, `ngctl apply WoW --dry-run`,
+`ngctl apply WoW --test-mode --minutes 10`, `ngctl recover`, `ngctl diag blocked`, `ngctl update`.
+Run `ngctl help` for the full list.

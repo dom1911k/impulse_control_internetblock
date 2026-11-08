@@ -3,9 +3,12 @@
 A self-control internet lock for a Windows gaming PC. It blocks all internet except the programs
 the active profile allows. Daily use is simple, and undoing it in a weak moment is deliberately hard.
 
-> **Status: milestone 1 of 5 – core engine + admin console (`ngctl`).**
-> No service, tray app, cooldown or installer yet. Test steps: [docs/TESTING-M1.md](docs/TESTING-M1.md).
+> **Status: milestone 1 of 5 – core engine, window app (test mode only), console tool, installer.**
+> No background service, cooldown or tray icon yet. Test steps: [docs/TESTING-M1.md](docs/TESTING-M1.md).
 > Emergency: [docs/RECOVERY.md](docs/RECOVERY.md).
+>
+> **Download:** [NetGuardSetup.exe](https://github.com/dom1911k/impulse_control_internetblock/releases/latest/download/NetGuardSetup.exe)
+> (newest release, no sign-in needed).
 
 ## Profiles (default config)
 
@@ -56,30 +59,29 @@ Rocksmith works in Steam Offline Mode.
 ```
 src/NetGuard.Core/       config, profile → rule planner, drift diff, hosts file, state, JSONL log (no Windows APIs)
 src/NetGuard.Windows/    COM firewall, Authenticode check, app detection, ACLs, dead-man task, blocked-connection diag
-src/NetGuard.Cli/        ngctl.exe – admin console
+src/NetGuard.App/        NetGuard.exe – the window app (WPF): profiles, setup, history, tools, updates
+src/NetGuard.Cli/        ngctl.exe – admin console (same functions, for scripts and troubleshooting)
+installer/               Inno Setup script → NetGuardSetup.exe (uninstall always restores normal internet)
 tests/NetGuard.Core.Tests/
 docs/                    TESTING-M1.md, RECOVERY.md
-.github/workflows/       Windows build: tests + ngctl.exe artifact
+.github/workflows/       Windows build: tests, both exes, installer, GitHub Release
 ```
 
-Coming next: `NetGuard.Service` (milestone 2), `NetGuard.Tray` (3), cooldown/commitments (4),
-`installer/` (5).
+Coming next: `NetGuard.Service` (milestone 2), tray icon + first-run wizard (3),
+cooldown/commitments (4), finished installer with service + recovery shortcut (5).
+From milestone 3 the window app talks to the service instead of changing the firewall itself, so it
+will run as your standard user.
 
 ## Updating
 
 Every push builds a numbered release (`v0.1.<build>`) on the
 [Releases page](https://github.com/dom1911k/impulse_control_internetblock/releases).
-In an admin terminal:
-
-```powershell
-.\ngctl update
-```
+In NetGuard: **Tools → Check for updates → Install update** (or `ngctl update` in an admin terminal).
 
 It downloads only from this repository's releases, verifies the SHA-256 checksum published with the
-release, swaps the exe (the old one is renamed and cleaned up on the next start), and logs the
-update. During a lock, ngctl itself has no internet, so updating only works with normal internet or
-in Maintenance. That's intentional. From milestone 3 the tray app will show "update available",
-and from milestone 5 updates will go through the installer.
+release, swaps the files (the old ones are renamed and cleaned up on the next start), and logs the
+update. During a lock, NetGuard itself has no internet, so updating only works with normal internet or
+in Maintenance. That's intentional. From milestone 3 the tray icon will show "update available".
 
 ## Building
 

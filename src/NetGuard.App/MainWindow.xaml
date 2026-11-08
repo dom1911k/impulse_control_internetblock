@@ -1,0 +1,164 @@
+<Window x:Class="NetGuard.App.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="NetGuard" Width="1040" Height="760" MinWidth="860" MinHeight="620"
+        WindowStartupLocation="CenterScreen" Background="#F4F6F8"
+        FontFamily="Segoe UI" FontSize="14" Icon="Assets/netguard.ico"
+        Closing="OnClosing">
+    <DockPanel>
+        <!-- ===== Status banner ===== -->
+        <Border x:Name="Banner" DockPanel.Dock="Top" Background="#2E3A46" Padding="28,20">
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="Auto"/>
+                </Grid.ColumnDefinitions>
+                <StackPanel VerticalAlignment="Center">
+                    <TextBlock Text="NETGUARD" FontSize="12" FontWeight="SemiBold" Foreground="#B9C6D2" />
+                    <TextBlock x:Name="StatusTitle" Text="Loading…" FontSize="26" FontWeight="SemiBold" Foreground="White" Margin="0,2,0,2"/>
+                    <TextBlock x:Name="StatusDetail" Text="" Foreground="#DCE4EC" TextWrapping="Wrap"/>
+                </StackPanel>
+                <StackPanel x:Name="CountdownPanel" Grid.Column="1" VerticalAlignment="Center" Visibility="Collapsed" Margin="24,0,0,0">
+                    <TextBlock Text="Internet comes back in" Foreground="#DCE4EC" HorizontalAlignment="Right"/>
+                    <TextBlock x:Name="CountdownText" Text="00:00" FontSize="40" FontWeight="Light" Foreground="White" HorizontalAlignment="Right"/>
+                    <Button x:Name="RestoreNowButton" Content="Restore internet now" Style="{StaticResource Secondary}"
+                            Margin="0,4,0,0" Click="OnRestoreNow"/>
+                </StackPanel>
+            </Grid>
+        </Border>
+
+        <!-- ===== Details / output ===== -->
+        <Border DockPanel.Dock="Bottom" Background="White" BorderBrush="{StaticResource Line}" BorderThickness="0,1,0,0">
+            <Expander x:Name="DetailsExpander" Header="Details" Padding="16,6" IsExpanded="True">
+                <TextBox x:Name="Output" Height="170" IsReadOnly="True" FontFamily="Consolas" FontSize="12.5"
+                         TextWrapping="NoWrap" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Auto"
+                         BorderThickness="0" Background="#FAFBFC" Padding="8"/>
+            </Expander>
+        </Border>
+
+        <TabControl x:Name="Tabs" Margin="18,14,18,10" Background="Transparent" BorderThickness="0">
+
+            <!-- ===== Profiles ===== -->
+            <TabItem Header="Profiles">
+                <ScrollViewer VerticalScrollBarVisibility="Auto">
+                    <StackPanel Margin="4,14,0,0">
+                        <Border Background="#E8F3F0" CornerRadius="8" Padding="14,10" Margin="0,0,14,14">
+                            <TextBlock TextWrapping="Wrap" Foreground="#24584C">
+                                <Run FontWeight="SemiBold" Text="Test mode."/>
+                                <Run Text="Every lock started here ends by itself after the time you choose, even if you close NetGuard or restart the PC. Nothing here can lock you out."/>
+                            </TextBlock>
+                        </Border>
+                        <StackPanel Orientation="Horizontal" Margin="0,0,0,14">
+                            <TextBlock Text="Test length" VerticalAlignment="Center" Margin="0,0,10,0" Foreground="{StaticResource Ink}"/>
+                            <ComboBox x:Name="MinutesBox" Width="130" SelectedIndex="0">
+                                <ComboBoxItem Content="3 minutes" Tag="3"/>
+                                <ComboBoxItem Content="5 minutes" Tag="5"/>
+                                <ComboBoxItem Content="10 minutes" Tag="10"/>
+                                <ComboBoxItem Content="15 minutes" Tag="15"/>
+                            </ComboBox>
+                        </StackPanel>
+                        <UniformGrid x:Name="ProfileCards" Columns="3"/>
+                        <TextBlock x:Name="NoConfigHint" Style="{StaticResource Body}" Visibility="Collapsed"
+                                   Text="NetGuard isn't set up yet. Open the Setup tab first."/>
+                    </StackPanel>
+                </ScrollViewer>
+            </TabItem>
+
+            <!-- ===== Setup ===== -->
+            <TabItem Header="Setup">
+                <ScrollViewer VerticalScrollBarVisibility="Auto">
+                    <StackPanel Margin="4,14,0,0">
+                        <Border Style="{StaticResource Card}">
+                            <StackPanel>
+                                <TextBlock Style="{StaticResource H2}" Text="1 · Find your apps"/>
+                                <TextBlock Style="{StaticResource Body}" Text="NetGuard looks for World of Warcraft, Battle.net, the Blizzard Agent, Spotify and Steam on this PC."/>
+                                <StackPanel Orientation="Horizontal">
+                                    <Button Content="Find apps" Style="{StaticResource Primary}" Click="OnDetect"/>
+                                </StackPanel>
+                            </StackPanel>
+                        </Border>
+                        <Border Style="{StaticResource Card}">
+                            <StackPanel>
+                                <TextBlock Style="{StaticResource H2}" Text="2 · Save the configuration"/>
+                                <TextBlock x:Name="ConfigStateText" Style="{StaticResource Body}" Text=""/>
+                                <StackPanel Orientation="Horizontal">
+                                    <Button x:Name="CreateConfigButton" Content="Create configuration" Style="{StaticResource Primary}" Click="OnInit"/>
+                                    <Button Content="Open NetGuard data folder" Style="{StaticResource Secondary}" Click="OnOpenDataFolder"/>
+                                </StackPanel>
+                            </StackPanel>
+                        </Border>
+                        <Border Style="{StaticResource Card}">
+                            <StackPanel>
+                                <TextBlock Style="{StaticResource H2}" Text="3 · Check the allowed files"/>
+                                <TextBlock Style="{StaticResource Body}" Text="Shows exactly which files each profile lets online. Every Blizzard and Spotify file must say 'signed by …'. Anything marked REJECTED will stay offline."/>
+                                <Button Content="Show allowed files" Style="{StaticResource Secondary}" HorizontalAlignment="Left" Click="OnPrograms"/>
+                            </StackPanel>
+                        </Border>
+                    </StackPanel>
+                </ScrollViewer>
+            </TabItem>
+
+            <!-- ===== History ===== -->
+            <TabItem Header="History">
+                <DockPanel Margin="4,14,0,0">
+                    <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Margin="0,0,0,10">
+                        <Button Content="Refresh" Style="{StaticResource Secondary}" Click="OnRefreshHistory"/>
+                        <TextBlock x:Name="HistoryCount" VerticalAlignment="Center" Foreground="{StaticResource Muted}" Margin="6,0,0,8"/>
+                    </StackPanel>
+                    <ListView x:Name="HistoryList" BorderBrush="{StaticResource Line}">
+                        <ListView.View>
+                            <GridView>
+                                <GridViewColumn Header="When" Width="150" DisplayMemberBinding="{Binding When}"/>
+                                <GridViewColumn Header="What" Width="200" DisplayMemberBinding="{Binding What}"/>
+                                <GridViewColumn Header="Details" Width="520" DisplayMemberBinding="{Binding Details}"/>
+                            </GridView>
+                        </ListView.View>
+                    </ListView>
+                </DockPanel>
+            </TabItem>
+
+            <!-- ===== Tools ===== -->
+            <TabItem Header="Tools">
+                <ScrollViewer VerticalScrollBarVisibility="Auto">
+                    <WrapPanel Margin="4,14,0,0" ItemWidth="470">
+                        <Border Style="{StaticResource Card}">
+                            <StackPanel>
+                                <TextBlock Style="{StaticResource H2}" Text="Restore normal internet"/>
+                                <TextBlock Style="{StaticResource Body}" Text="Removes all NetGuard rules, sets the firewall back to normal, switches the Windows rules NetGuard turned off back on, and cleans the hosts file."/>
+                                <Button Content="Restore normal internet…" Style="{StaticResource Secondary}" HorizontalAlignment="Left" Click="OnRecover"/>
+                            </StackPanel>
+                        </Border>
+                        <Border Style="{StaticResource Card}">
+                            <StackPanel>
+                                <TextBlock Style="{StaticResource H2}" Text="Current status"/>
+                                <TextBlock Style="{StaticResource Body}" Text="Firewall settings, NetGuard's rules, and whether anything differs from the active profile."/>
+                                <Button Content="Show status" Style="{StaticResource Secondary}" HorizontalAlignment="Left" Click="OnStatus"/>
+                            </StackPanel>
+                        </Border>
+                        <Border Style="{StaticResource Card}">
+                            <StackPanel>
+                                <TextBlock Style="{StaticResource H2}" Text="Find blocked programs"/>
+                                <TextBlock Style="{StaticResource Body}" Text="If something that should work doesn't (e.g. Battle.net can't log in): start recording, try again, then show what was blocked."/>
+                                <WrapPanel>
+                                    <Button Content="Start recording" Style="{StaticResource Secondary}" Click="OnAuditOn"/>
+                                    <Button Content="Stop recording" Style="{StaticResource Secondary}" Click="OnAuditOff"/>
+                                    <Button Content="Show blocked (last 10 min)" Style="{StaticResource Primary}" Click="OnShowBlocked"/>
+                                </WrapPanel>
+                            </StackPanel>
+                        </Border>
+                        <Border Style="{StaticResource Card}">
+                            <StackPanel>
+                                <TextBlock Style="{StaticResource H2}" Text="Updates"/>
+                                <TextBlock x:Name="VersionText" Style="{StaticResource Body}" Text=""/>
+                                <WrapPanel>
+                                    <Button Content="Check for updates" Style="{StaticResource Secondary}" Click="OnCheckUpdate"/>
+                                    <Button x:Name="InstallUpdateButton" Content="Install update" Style="{StaticResource Primary}" IsEnabled="False" Click="OnInstallUpdate"/>
+                                </WrapPanel>
+                            </StackPanel>
+                        </Border>
+                    </WrapPanel>
+                </ScrollViewer>
+            </TabItem>
+        </TabControl>
+    </DockPanel>
+</Window>

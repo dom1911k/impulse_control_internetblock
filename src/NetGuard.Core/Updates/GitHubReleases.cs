@@ -20,6 +20,9 @@ public static class GitHubReleases
 {
     public const string Owner = "dom1911k";
     public const string Repo = "impulse_control_internetblock";
+    /// <summary>The full package: NetGuard.exe (window app), ngctl.exe (console), docs.</summary>
+    public const string PackageZip = "NetGuard-win-x64.zip";
+    /// <summary>Name used by the first builds (ngctl only). Still published so those can update.</summary>
     public const string NgctlZip = "NetGuard-ngctl-win-x64.zip";
     public static string ReleasesPage => $"https://github.com/{Owner}/{Repo}/releases";
     public static string LatestApiUrl => $"https://api.github.com/repos/{Owner}/{Repo}/releases/latest";

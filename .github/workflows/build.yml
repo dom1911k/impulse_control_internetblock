@@ -13,7 +13,7 @@ jobs:
     runs-on: windows-latest
     env:
       # Every CI build gets a unique, increasing version: 0.1.<run number>.
-      # ngctl compares this with the newest release to decide whether to update.
+      # NetGuard compares this with the newest release to decide whether to update.
       NG_VERSION: 0.1.${{ github.run_number }}
     steps:
       - uses: actions/checkout@v4
@@ -25,27 +25,42 @@ jobs:
       - name: Unit tests
         run: dotnet test tests/NetGuard.Core.Tests -c Release
 
-      - name: Publish ngctl.exe (self-contained, single file)
-        run: dotnet publish src/NetGuard.Cli -c Release -o publish/ngctl -p:Version=${{ env.NG_VERSION }}
+      - name: Publish NetGuard.exe and ngctl.exe (self-contained, single file)
+        run: |
+          dotnet publish src/NetGuard.App -c Release -o publish/NetGuard -p:Version=${{ env.NG_VERSION }}
+          dotnet publish src/NetGuard.Cli -c Release -o publish/NetGuard -p:Version=${{ env.NG_VERSION }}
 
-      - name: Package
+      - name: Package zip
         shell: pwsh
         run: |
-          Copy-Item docs/TESTING-M1.md publish/ngctl/
-          Copy-Item docs/RECOVERY.md publish/ngctl/
-          Get-ChildItem publish/ngctl -Filter *.pdb | Remove-Item
-          Compress-Archive -Path publish/ngctl/* -DestinationPath NetGuard-ngctl-win-x64.zip
-          $hash = (Get-FileHash NetGuard-ngctl-win-x64.zip -Algorithm SHA256).Hash.ToLower()
-          "$hash  NetGuard-ngctl-win-x64.zip" | Out-File -Encoding ascii -NoNewline NetGuard-ngctl-win-x64.zip.sha256
+          Copy-Item docs/TESTING-M1.md, docs/RECOVERY.md publish/NetGuard/
+          Get-ChildItem publish/NetGuard -Filter *.pdb | Remove-Item
+          Compress-Archive -Path publish/NetGuard/* -DestinationPath NetGuard-win-x64.zip
+          # Same package under the old name, so the first ngctl builds can still update themselves.
+          Copy-Item NetGuard-win-x64.zip NetGuard-ngctl-win-x64.zip
+          foreach ($z in 'NetGuard-win-x64.zip', 'NetGuard-ngctl-win-x64.zip') {
+            $hash = (Get-FileHash $z -Algorithm SHA256).Hash.ToLower()
+            "$hash  $z" | Out-File -Encoding ascii -NoNewline "$z.sha256"
+          }
+
+      - name: Build installer (NetGuardSetup.exe)
+        shell: pwsh
+        run: |
+          $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
+          if (-not (Test-Path $iscc)) { choco install innosetup -y --no-progress | Out-Null }
+          & $iscc "/DAppVersion=$env:NG_VERSION" installer\NetGuard.iss
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - uses: actions/upload-artifact@v4
         with:
-          name: NetGuard-ngctl-win-x64
-          path: publish/ngctl/
+          name: NetGuard-win-x64
+          path: |
+            out/NetGuardSetup.exe
+            NetGuard-win-x64.zip
           retention-days: 30
 
       # Pushes publish a release, so the newest build can be downloaded without signing in,
-      # and 'ngctl update' can find it.
+      # and NetGuard's "Check for updates" can find it.
       - name: Publish GitHub Release
         if: github.event_name == 'push'
         uses: softprops/action-gh-release@v2
@@ -54,10 +69,15 @@ jobs:
           name: NetGuard ${{ env.NG_VERSION }}
           target_commitish: ${{ github.sha }}
           body: |
+            **Download `NetGuardSetup.exe` below and run it.**
+
             Build ${{ env.NG_VERSION }} from branch `${{ github.ref_name }}` (commit ${{ github.sha }}).
 
             ${{ github.event.head_commit.message }}
           files: |
+            out/NetGuardSetup.exe
+            NetGuard-win-x64.zip
+            NetGuard-win-x64.zip.sha256
             NetGuard-ngctl-win-x64.zip
             NetGuard-ngctl-win-x64.zip.sha256
           make_latest: true

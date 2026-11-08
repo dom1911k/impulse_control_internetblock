@@ -63,7 +63,7 @@ Profiles in the default config: Offline, WoW, Maintenance
             Console.WriteLine($"ngctl {GitHubReleases.CurrentVersion}");
             return 0;
         }
-        if (OperatingSystem.IsWindows()) SelfUpdater.CleanupOldExe();
+        if (OperatingSystem.IsWindows()) Updater.CleanupOldFiles();
         if (!OperatingSystem.IsWindows()) { Err("ngctl only runs on Windows."); return 1; }
         if (!WinEnv.IsElevatedAdmin())
         {
@@ -264,7 +264,7 @@ Profiles in the default config: Offline, WoW, Maintenance
 
         // ---- test mode
         var minutes = a.Int("--minutes") ?? cfg.Timings.TestModeMinutes;
-        if (minutes is < 1 or > 15) { Err("--minutes must be between 1 and 15."); return 1; }
+        if (minutes < 1 || minutes > TestMode.MaxMinutes) { Err($"--minutes must be between 1 and {TestMode.MaxMinutes}."); return 1; }
 
         var deadline = DateTimeOffset.UtcNow.AddMinutes(minutes);
         Console.WriteLine();
@@ -274,32 +274,13 @@ Profiles in the default config: Offline, WoW, Maintenance
         Console.WriteLine("restores internet ~30 seconds after the deadline (or at the next boot).");
         if (!a.Has("--yes") && !Confirm("Type YES to start")) return 1;
 
-        // Arm the independent safety net BEFORE locking anything.
-        var exe = Environment.ProcessPath ?? throw new InvalidOperationException("Cannot determine ngctl.exe path.");
-        DeadManSwitch.Arm(deadline.ToLocalTime().DateTime.AddSeconds(30), exe, Path.GetDirectoryName(exe)!);
+        var (info, result) = TestMode.Start(engine, cfg, profile, minutes, actor);
         Ok("Dead-man switch armed (scheduled task \\NetGuard\\DeadManSwitch).");
-
-        var testMode = new TestModeInfo { DeadlineUtc = deadline, TaskName = DeadManSwitch.TaskName };
-        engine.Log.Append(LogTypes.TestModeStarted, new { profile = desired.ProfileName, minutes, deadlineUtc = deadline }, actor);
-        ExecutionResult result;
-        try
-        {
-            (_, _, result) = engine.ApplyProfile(cfg, profile, actor, testMode);
-        }
-        catch
-        {
-            engine.Recover("apply failed in test mode", actor);
-            DeadManSwitch.Disarm();
-            throw;
-        }
         PrintResult(result);
 
-        var endedEarly = Countdown(deadline);
+        var endedEarly = Countdown(info.DeadlineUtc);
         Console.WriteLine();
-        var (_, rec) = engine.Recover(endedEarly ? "test mode ended early by user" : "test mode deadline reached", actor);
-        DeadManSwitch.Disarm();
-        engine.Log.Append(LogTypes.TestModeEnded, new { profile = desired.ProfileName, endedEarly }, actor);
-        PrintResult(rec);
+        PrintResult(TestMode.End(engine, actor, endedEarly));
         Ok("Normal internet restored.");
         return 0;
     }
@@ -331,8 +312,9 @@ Profiles in the default config: Offline, WoW, Maintenance
         var state = engine.LoadState();
         var plan = engine.PlanRecovery(state);
         var fromTask = a.Has("--from-task");
+        var quiet = fromTask || a.Has("--quiet");
 
-        if (!fromTask)
+        if (!quiet)
         {
             Head("Recovery – restore normal internet");
             PrintPlan(plan);
@@ -346,7 +328,7 @@ Profiles in the default config: Offline, WoW, Maintenance
         var reason = a.Value("--reason") ?? (fromTask ? "dead-man switch" : "manual recovery via ngctl");
         var (_, result) = engine.Recover(reason, fromTask ? "SYSTEM (dead-man task)" : WinEnv.CurrentUser());
         try { DeadManSwitch.Disarm(); } catch { /* best effort */ }
-        if (!fromTask)
+        if (!quiet)
         {
             PrintResult(result);
             if (result.Success) Ok("Normal internet restored.");
@@ -369,7 +351,7 @@ Profiles in the default config: Offline, WoW, Maintenance
         Head("Update");
         Line("Installed", current.ToString());
         Console.WriteLine("  Checking " + GitHubReleases.ReleasesPage + " …");
-        var latest = SelfUpdater.CheckLatest();
+        var latest = Updater.CheckLatestAsync().GetAwaiter().GetResult();
         Line("Newest release", $"{latest.Version}" + (latest.Published is { } p ? $"  ({p.ToLocalTime():g})" : ""));
 
         if (latest.Version <= current)
@@ -389,9 +371,9 @@ Profiles in the default config: Offline, WoW, Maintenance
         }
         if (!a.Has("--yes") && !Confirm($"Type YES to update to {latest.Version}")) return 1;
 
-        var r = SelfUpdater.Install(latest);
-        engine.Log.Append(LogTypes.Updated, new { from = current.ToString(), to = latest.Version.ToString(), release = latest.HtmlUrl }, WinEnv.CurrentUser());
-        Ok(r.Message + " Run 'ngctl version' to confirm.");
+        var files = Updater.InstallAsync(latest, m => Console.WriteLine("  " + m)).GetAwaiter().GetResult();
+        engine.Log.Append(LogTypes.Updated, new { from = current.ToString(), to = latest.Version.ToString(), release = latest.HtmlUrl, files }, WinEnv.CurrentUser());
+        Ok($"Updated to {latest.Version} ({string.Join(", ", files)}). Run 'ngctl version' to confirm.");
         return 0;
     }
 

@@ -1,0 +1,24 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- NetGuard.exe: the window app. -->
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net8.0-windows10.0.17763.0</TargetFramework>
+    <UseWPF>true</UseWPF>
+    <AssemblyName>NetGuard</AssemblyName>
+    <RootNamespace>NetGuard.App</RootNamespace>
+    <ApplicationIcon>Assets\netguard.ico</ApplicationIcon>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <RuntimeIdentifier>win-x64</RuntimeIdentifier>
+    <SelfContained>true</SelfContained>
+    <PublishSingleFile>true</PublishSingleFile>
+    <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
+    <EnableCompressionInSingleFile>true</EnableCompressionInSingleFile>
+  </PropertyGroup>
+  <ItemGroup>
+    <Resource Include="Assets\netguard.ico" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\NetGuard.Core\NetGuard.Core.csproj" />
+    <ProjectReference Include="..\NetGuard.Windows\NetGuard.Windows.csproj" />
+  </ItemGroup>
+</Project>
