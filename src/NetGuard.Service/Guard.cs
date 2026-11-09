@@ -785,6 +785,7 @@ public sealed class Guard
         Allowed = p.Allowed, EndsUtc = p.EndsUtc, NextStartUtc = p.NextStartUtc, UsedTodayMinutes = p.UsedTodayMinutes,
         DailyLimitMinutes = p.DailyLimitMinutes, UsedWeekMinutes = p.UsedWeekMinutes, WeeklyLimitMinutes = p.WeeklyLimitMinutes,
         GraceAvailable = p.GraceAvailable, GraceActive = p.GraceActive, Reason = p.Reason,
+        WindowEndsUtc = p.WindowEndsUtc, MinutesLeftToday = p.MinutesLeftToday,
     };
 
     private IpcResponse UnlockRequest(IpcRequest req, CallerInfo caller)

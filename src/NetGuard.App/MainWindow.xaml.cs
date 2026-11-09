@@ -235,12 +235,18 @@ public partial class MainWindow : Window
 
     private static string Mins(int m) => m >= 60 ? $"{m / 60}h{(m % 60 > 0 ? $" {m % 60}min" : "")}" : $"{m}min";
 
-    private static string PlayLine(PlayDto p)
+    /// <summary>
+    /// Active: when play time really ends. Not active: the time only counts once you switch, so show
+    /// how long the window is open and how much play time is left instead of a moving end time.
+    /// </summary>
+    private static string PlayLine(PlayDto p, bool active)
     {
-        var parts = new List<string>
-        {
-            p.Allowed ? $"🎮 Play time{(p.EndsUtc is { } e ? $" until {Fmt(e)}" : "")}" : "⏸ " + p.Reason,
-        };
+        string first;
+        if (!p.Allowed) first = "⏸ " + p.Reason;
+        else if (active) first = $"🎮 Play time until {(p.EndsUtc is { } e ? Fmt(e) : "–")}";
+        else first = $"🎮 Play time open{(p.WindowEndsUtc is { } windowEnd ? $" until {Fmt(windowEnd)}" : "")}" +
+                     (p.MinutesLeftToday is { } left ? $" · {Mins(left)} left" : "");
+        var parts = new List<string> { first };
         if (p.DailyLimitMinutes is { } d) parts.Add($"today {Mins(p.UsedTodayMinutes)} / {Mins(d)}");
         if (p.WeeklyLimitMinutes is { } w) parts.Add($"week {Mins(p.UsedWeekMinutes)} / {Mins(w)}");
         return string.Join(" · ", parts);
@@ -266,7 +272,7 @@ public partial class MainWindow : Window
     {
         var sig = status == null ? "down" :
             string.Join("|", status.Profiles.Select(p => $"{p.Name}{p.IsActive}{p.SwitchAllowed}{p.SwitchHint}{p.UnlockAllowed}{p.UnlockHint}" +
-                                                    (p.Play == null ? "" : PlayLine(p.Play)))) + status.ConfigExists + status.UnlocksLeftToday;
+                                                    (p.Play == null ? "" : PlayLine(p.Play, p.IsActive)))) + status.ConfigExists + status.UnlocksLeftToday;
         if (sig == _cardsSignature) return;
         _cardsSignature = sig;
 
@@ -309,7 +315,7 @@ public partial class MainWindow : Window
             if (p.Play is { } play)
                 stack.Children.Add(new TextBlock
                 {
-                    Text = PlayLine(play), FontSize = 12, TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 4, 0, 0),
+                    Text = PlayLine(play, p.IsActive), FontSize = 12, TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 4, 0, 0),
                     Foreground = Brush(play.Allowed ? "#2E7D6B" : "#5F6B7A"),
                 });
             if (!p.IsActive && !p.SwitchAllowed)

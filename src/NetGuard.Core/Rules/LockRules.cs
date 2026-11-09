@@ -15,7 +15,9 @@ public sealed record PlayStatus(
     int? WeeklyLimitMinutes,
     bool GraceAvailable,
     bool GraceActive,
-    string Reason);
+    string Reason,
+    DateTimeOffset? WindowEndsUtc = null,
+    int? MinutesLeftToday = null);
 
 public sealed record RuleEvent(string Type, object Data);
 
@@ -161,8 +163,13 @@ public sealed class LockRules
             if (graceActive) reason = "Grace time.";
         }
 
+        DateTimeOffset? windowEnd = window != null ? Utc(today.AddMinutes(window.EndMinute)) : null;
+        if (graceActive && (windowEnd == null || grace!.UntilUtc > windowEnd)) windowEnd = grace!.UntilUtc;
+        var left = Math.Min(remDaily, remWeek);
+        int? minutesLeft = left == int.MaxValue ? null : Math.Max(0, left) / 60;
         return new PlayStatus(allowed, ends, next, usedTodaySec / 60, dailyLimit, usedWeekSec / 60, plan.WeeklyLimitMinutes,
-            graceAvailable, graceActive, allowed ? reason : reason + (next is { } n ? $" Next play time: {LocalText(n)}." : ""));
+            graceAvailable, graceActive, allowed ? reason : reason + (next is { } n ? $" Next play time: {LocalText(n)}." : ""),
+            windowEnd, minutesLeft);
     }
 
     private static DateTimeOffset Min(DateTimeOffset a, DateTimeOffset b) => a < b ? a : b;

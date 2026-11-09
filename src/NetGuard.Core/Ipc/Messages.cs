@@ -210,6 +210,10 @@ public sealed class PlayDto
     public bool GraceAvailable { get; set; }
     public bool GraceActive { get; set; }
     public string Reason { get; set; } = "";
+    /// <summary>End of the current play window (independent of how much time is left).</summary>
+    public DateTimeOffset? WindowEndsUtc { get; set; }
+    /// <summary>Play time left today/this week, whichever is smaller (null = no limit).</summary>
+    public int? MinutesLeftToday { get; set; }
 }
 
 public sealed class PlanDto
