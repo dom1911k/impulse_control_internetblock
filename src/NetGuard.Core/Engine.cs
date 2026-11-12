@@ -59,8 +59,11 @@ public sealed class Engine
     /// <summary>The last desired state built (the service reads rejected files from it).</summary>
     public DesiredState? LastDesired { get; private set; }
 
+    /// <summary>Extra programs to allow right now (the short "Bass check" window). Set by the service.</summary>
+    public Func<NetGuardConfig, IEnumerable<ProgramEntry>>? ExtraAllowed { get; set; }
+
     public DesiredState BuildDesired(NetGuardConfig cfg, string profile) =>
-        LastDesired = DesiredStateBuilder.Build(cfg, profile, _resolver, _expandEnv, ExtraBlocked?.Invoke(cfg));
+        LastDesired = DesiredStateBuilder.Build(cfg, profile, _resolver, _expandEnv, ExtraBlocked?.Invoke(cfg), ExtraAllowed?.Invoke(cfg));
 
     public Plan PlanApply(NetGuardConfig cfg, DesiredState desired) =>
         Planner.Diff(desired, _fw.GetSnapshot(), HostsFile.IsUpToDate(ReadHosts(), desired.BlockedHosts), cfg.ProtectedRuleGroups);

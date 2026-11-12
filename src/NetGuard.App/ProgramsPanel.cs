@@ -13,6 +13,7 @@ namespace NetGuard.App;
 public sealed class ProgramsPanel : Grid
 {
     private const string AlwaysBlocked = "Always blocked";
+    private const string WindowList = "Short window";
     private readonly Window _owner;
     private readonly GuardClient _client;
     private readonly ListBox _lists = new() { BorderThickness = new Thickness(0), Background = Brushes.Transparent, FontSize = 15 };
@@ -70,7 +71,8 @@ public sealed class ProgramsPanel : Grid
         _lists.Items.Clear();
         foreach (var p in _config!.Profiles)
             _lists.Items.Add(new ListBoxItem { Content = p.Name + (p.IsActive ? "   (active)" : ""), Tag = p.Name, Padding = new Thickness(8, 6, 8, 6) });
-        _lists.Items.Add(new ListBoxItem { Content = AlwaysBlocked, Tag = AlwaysBlocked, Padding = new Thickness(8, 6, 8, 6), Margin = new Thickness(0, 8, 0, 0) });
+        _lists.Items.Add(new ListBoxItem { Content = "🎸 " + _config.WindowName, Tag = WindowList, Padding = new Thickness(8, 6, 8, 6), Margin = new Thickness(0, 8, 0, 0) });
+        _lists.Items.Add(new ListBoxItem { Content = AlwaysBlocked, Tag = AlwaysBlocked, Padding = new Thickness(8, 6, 8, 6) });
         _selected ??= _config.Profiles.FirstOrDefault(p => p.Kind == "Allowlist" && p.Programs.Count > 0)?.Name ?? AlwaysBlocked;
         var item = _lists.Items.Cast<ListBoxItem>().FirstOrDefault(i => (string)i.Tag == _selected) ?? (ListBoxItem)_lists.Items[0];
         _lists.SelectedItem = item;
@@ -87,15 +89,18 @@ public sealed class ProgramsPanel : Grid
     {
         if (_config == null || _selected == null) return;
         var isBlocked = _selected == AlwaysBlocked;
-        var p = isBlocked ? _config.AlwaysBlocked : _config.Profiles.FirstOrDefault(x => x.Name == _selected);
+        var isWindow = _selected == WindowList;
+        var p = isBlocked ? _config.AlwaysBlocked : isWindow ? _config.Window : _config.Profiles.FirstOrDefault(x => x.Name == _selected);
         if (p == null) return;
         _detail.Children.Clear();
 
-        _detail.Children.Add(new TextBlock { Text = p.Name, FontSize = 20, FontWeight = FontWeights.SemiBold, Foreground = Ink });
+        _detail.Children.Add(new TextBlock { Text = isWindow ? _config.WindowName : p.Name, FontSize = 20, FontWeight = FontWeights.SemiBold, Foreground = Ink });
         _detail.Children.Add(new TextBlock
         {
             TextWrapping = TextWrapping.Wrap, Foreground = Muted, Margin = new Thickness(0, 4, 0, 14),
             Text = isBlocked ? "These programs never get internet, in any profile – even in Maintenance."
+                : isWindow ? $"While {_config.WindowName} is open (Home tab, a few minutes a few times a day), these programs get internet on top of your profile. " +
+                             "Chrome only reaches the websites listed below – everything else shows \"blocked by your organization\"."
                 : p.Kind == "AllowAll" ? "Maintenance lets everything online except the always-blocked programs. Nothing to choose here."
                 : "Only these programs (plus DNS and time sync) can use the internet in this profile.",
         });
@@ -109,7 +114,7 @@ public sealed class ProgramsPanel : Grid
         addFile.IsEnabled = addRunning.IsEnabled = canAdd;
         add.Children.Add(addFile);
         add.Children.Add(addRunning);
-        if (!isBlocked)
+        if (!isBlocked && !isWindow)
         {
             var name = p.Name;
             add.Children.Add(Btn("Preview firewall changes", false, async () => await PreviewAsync(name)));
@@ -121,6 +126,8 @@ public sealed class ProgramsPanel : Grid
 
         if (p.Programs.Count == 0)
             _detail.Children.Add(new TextBlock { Text = "No programs yet.", Foreground = Muted, Margin = new Thickness(0, 12, 0, 0) });
+
+        if (isWindow) _detail.Children.Add(Websites());
 
         foreach (var prog in p.Programs)
         {
@@ -167,6 +174,53 @@ public sealed class ProgramsPanel : Grid
         }
     }
 
+    private UIElement Websites()
+    {
+        var sp = new StackPanel();
+        sp.Children.Add(new TextBlock { Text = "Websites Chrome may open", FontSize = 16, FontWeight = FontWeights.SemiBold, Foreground = Ink, Margin = new Thickness(0, 6, 0, 2) });
+        sp.Children.Add(new TextBlock
+        {
+            Text = "Each entry includes its subdomains (customsforge.com covers ignition4.customsforge.com). If a page or download doesn't load, " +
+                   "add the website it comes from. Adding needs normal internet or Maintenance; removing always works.",
+            TextWrapping = TextWrapping.Wrap, Foreground = Muted, FontSize = 12, Margin = new Thickness(0, 0, 0, 8),
+        });
+        var add = new DockPanel { Margin = new Thickness(0, 0, 0, 8) };
+        var box = new TextBox { FontSize = 14, Padding = new Thickness(6, 4, 6, 4), Width = 300, IsEnabled = _config!.CanLoosen };
+        var addBtn = Btn("Add website", true, async () => await WebsiteAsync(IpcCommands.WebsiteAdd, box.Text));
+        addBtn.IsEnabled = _config.CanLoosen;
+        addBtn.Margin = new Thickness(8, 0, 0, 0);
+        DockPanel.SetDock(box, Dock.Left);
+        add.Children.Add(box);
+        add.Children.Add(addBtn);
+        sp.Children.Add(add);
+        var chips = new WrapPanel();
+        foreach (var site in _config.Websites)
+        {
+            var chip = new Button
+            {
+                Content = $"{site}  ✕", ToolTip = "Remove", Margin = new Thickness(0, 0, 6, 6), Padding = new Thickness(8, 2, 8, 2),
+                Style = (Style)Application.Current.FindResource("Secondary"),
+            };
+            var s = site;
+            chip.Click += async (_, _) => await WebsiteAsync(IpcCommands.WebsiteRemove, s);
+            chips.Children.Add(chip);
+        }
+        sp.Children.Add(chips);
+        sp.Children.Add(new TextBlock { Text = "Programs", FontSize = 16, FontWeight = FontWeights.SemiBold, Foreground = Ink, Margin = new Thickness(0, 12, 0, 0) });
+        sp.Children.Add(new TextBlock { Text = "Add the YT Downloader here (Add program file…) if you use it.", Foreground = Muted, FontSize = 12 });
+        return sp;
+    }
+
+    private async Task WebsiteAsync(string command, string site)
+    {
+        if (string.IsNullOrWhiteSpace(site)) return;
+        try { _status.Text = (await _client.CallAsync(new IpcRequest { Command = command, Text = site })).Text; }
+        catch (Exception e) { _status.Text = e.Message; }
+        var keep = _status.Text;
+        await RefreshAsync();
+        _status.Text = keep;
+    }
+
     private async Task AddFromFileAsync()
     {
         var dlg = new Microsoft.Win32.OpenFileDialog
@@ -191,7 +245,8 @@ public sealed class ProgramsPanel : Grid
             var info = await _client.CallAsync(new IpcRequest { Command = IpcCommands.InspectFile, Path = path });
             var prog = info.Program!;
             var verb = _selected == AlwaysBlocked ? "block" : "allow";
-            if (MessageBox.Show(_owner, $"{(verb == "block" ? "Always block" : $"Allow in {_selected}")}: {prog.Name}?\n\n{path}\n\n{prog.PinDescription}",
+            var where = _selected == WindowList ? _config?.WindowName : _selected;
+            if (MessageBox.Show(_owner, $"{(verb == "block" ? "Always block" : $"Allow in {where}")}: {prog.Name}?\n\n{path}\n\n{prog.PinDescription}",
                     "Add program", MessageBoxButton.OKCancel, MessageBoxImage.Question) != MessageBoxResult.OK) return;
             var r = await _client.CallAsync(new IpcRequest { Command = IpcCommands.ProgramAdd, Profile = _selected, Path = path });
             _status.Text = r.Text;

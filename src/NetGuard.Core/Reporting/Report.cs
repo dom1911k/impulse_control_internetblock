@@ -93,6 +93,8 @@ public static class Report
         LogTypes.ClockJump => "Clock change ignored",
         LogTypes.PracticeStarted => "Practice mode started",
         LogTypes.PracticeEnded => "Practice mode ended",
+        LogTypes.WindowStarted => "Short window opened",
+        LogTypes.WindowEnded => "Short window closed",
         LogTypes.ProfileApplied => "Profile applied",
         LogTypes.ApplyError => "Problem while applying",
         LogTypes.Recovery => "Normal internet restored",

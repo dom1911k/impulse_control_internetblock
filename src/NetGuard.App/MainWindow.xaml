@@ -28,6 +28,11 @@
                         <TextBlock x:Name="PlayLeftText" Text="0:00" FontSize="40" FontWeight="Light" Foreground="White" HorizontalAlignment="Right"/>
                         <Button x:Name="GraceButton" Content="+10 min (once today)" Style="{StaticResource Secondary}" Margin="0,4,0,0" Visibility="Collapsed" Click="OnGrace"/>
                     </StackPanel>
+                    <StackPanel x:Name="WindowPanel" Visibility="Collapsed" HorizontalAlignment="Right">
+                        <TextBlock x:Name="WindowLabel" Text="Bass check" Foreground="#DCE4EC" HorizontalAlignment="Right"/>
+                        <TextBlock x:Name="WindowLeftText" Text="00:00" FontSize="40" FontWeight="Light" Foreground="White" HorizontalAlignment="Right"/>
+                        <Button Content="Close now" Style="{StaticResource Secondary}" Margin="0,4,0,0" Click="OnWindowEnd"/>
+                    </StackPanel>
                     <StackPanel x:Name="CountdownPanel" Visibility="Collapsed">
                         <TextBlock Text="Internet comes back in" Foreground="#DCE4EC" HorizontalAlignment="Right"/>
                         <TextBlock x:Name="CountdownText" Text="00:00" FontSize="40" FontWeight="Light" Foreground="White" HorizontalAlignment="Right"/>
@@ -77,6 +82,8 @@
 
                         <DockPanel Margin="0,0,14,10">
                             <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Center">
+                                <TextBlock x:Name="WindowHintText" VerticalAlignment="Center" Margin="0,0,8,0" Foreground="{StaticResource Muted}" FontSize="12"/>
+                                <Button x:Name="WindowButton" Content="🎸 Bass check" Style="{StaticResource Secondary}" Margin="0,0,16,0" Click="OnWindowStart"/>
                                 <TextBlock x:Name="CommitText" VerticalAlignment="Center" Margin="0,0,12,0" Foreground="{StaticResource Muted}"/>
                                 <Button x:Name="CommitButton" Content="Commit…" Style="{StaticResource Secondary}" Margin="0" Click="OnCommit"
                                         ToolTip="Promise to stay in a profile (or stricter) until a time you choose. Can be extended, never shortened."/>

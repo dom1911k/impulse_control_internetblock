@@ -21,6 +21,7 @@ public sealed class TrayIcon : IDisposable
     private DateTimeOffset? _warnedDeadline;
     private DateTimeOffset? _warnedUnlock;
     private DateTimeOffset? _warnedMaintenance;
+    private DateTimeOffset? _warnedWindow;
     private readonly HashSet<(DateTimeOffset, int)> _warnedPlay = new();
 
     public TrayIcon(StatusMonitor monitor, Action open, Action exit)
@@ -59,6 +60,8 @@ public sealed class TrayIcon : IDisposable
                 ? $"NetGuard – {s.ActiveProfile} test lock until {d.ToLocalTime():t}"
                 : s.Unlock is { } u
                     ? $"NetGuard – {s.ActiveProfile}, unlock to {u.TargetProfile} pending"
+                    : s.WindowUntilUtc is { } wtu
+                        ? $"NetGuard – {s.ActiveProfile}, {s.WindowName} until {wtu.ToLocalTime():HH:mm}"
                     : s.CommitmentUntilUtc is { } cu
                         ? $"NetGuard – {s.ActiveProfile}, committed until {cu.ToLocalTime():ddd HH:mm}"
                         : play is { Allowed: true, EndsUtc: { } pe }
@@ -112,6 +115,12 @@ public sealed class TrayIcon : IDisposable
                 var extra = play.GraceAvailable ? " You can take 10 more minutes once today (open NetGuard)." : "";
                 _icon.ShowBalloonTip(8000, "NetGuard", $"{mark} minute{(mark > 1 ? "s" : "")} of play time left.{extra}", Forms.ToolTipIcon.Warning);
             }
+        }
+
+        if (s.WindowUntilUtc is { } wu && wu - now <= TimeSpan.FromMinutes(2) && wu > now && _warnedWindow != wu)
+        {
+            _warnedWindow = wu;
+            _icon.ShowBalloonTip(6000, "NetGuard", $"{s.WindowName} closes in 2 minutes – finish your downloads.", Forms.ToolTipIcon.Info);
         }
 
         if (s.MaintenanceUntilUtc is { } mu && mu - now <= TimeSpan.FromMinutes(5) && mu > now && _warnedMaintenance != mu)

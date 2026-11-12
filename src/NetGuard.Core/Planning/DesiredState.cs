@@ -24,8 +24,10 @@ public static class DesiredStateBuilder
 
     public const string GameBlockProfile = "PlayTime";
 
+    public const string BrowseProfile = "Window";
+
     public static DesiredState Build(NetGuardConfig cfg, string profileName, ProgramResolver resolver, Func<string, string>? expandEnv = null,
-        IEnumerable<ProgramEntry>? extraBlocked = null)
+        IEnumerable<ProgramEntry>? extraBlocked = null, IEnumerable<ProgramEntry>? extraAllowed = null)
     {
         expandEnv ??= Environment.ExpandEnvironmentVariables;
         var profile = cfg.FindProfile(profileName)
@@ -76,6 +78,22 @@ public static class DesiredStateBuilder
                         d.RejectedPrograms.Add(r);
                         d.Warnings.Add($"{entry.Name}: NOT allowed {r.Path} – {r.Detail}");
                     }
+                }
+            }
+        }
+
+        // 2b) extra programs for a short window ("Bass check") on top of the profile
+        if (allowList)
+        {
+            foreach (var entry in extraAllowed ?? Enumerable.Empty<ProgramEntry>())
+            {
+                foreach (var r in resolver.Resolve(entry))
+                {
+                    if (r.Status != ResolvedStatus.Allowed) { d.RejectedPrograms.Add(r); continue; }
+                    if (d.AllowedPrograms.Any(a => FwRule.PathEq(a.Path, r.Path))) continue;
+                    d.AllowedPrograms.Add(r);
+                    d.Rules.Add(new RuleSpec(names.Next(BrowseProfile, r.Path), FwAction.Allow, r.Path, null,
+                        FwProtocol.Any, null, $"{ManagedDescription} (short window: {entry.Name})"));
                 }
             }
         }

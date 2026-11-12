@@ -120,3 +120,67 @@ public class StatsTests
         Assert.Equal(new DateTime(2026, 10, 30, 9, 0, 0), s.ProtectingSince);
     }
 }
+
+public class BrowseWindowTests
+{
+    private static readonly NetGuard.Core.Rules.LockRules Rules = new(TimeZoneInfo.Utc);
+    private static DateTimeOffset At(int h, int m = 0) => new(2026, 11, 12, h, m, 0, TimeSpan.Zero);
+
+    [Fact]
+    public void Twenty_minutes_twice_a_day_on_top_of_a_lock()
+    {
+        var cfg = DefaultConfig.Create(new DetectedPaths());
+        Assert.False(Rules.CanStartBrowseWindow(cfg, new NetGuardState(), At(10)).Allowed);                                   // normal internet
+        Assert.False(Rules.CanStartBrowseWindow(cfg, new NetGuardState { ActiveProfile = "Maintenance" }, At(10)).Allowed);
+
+        var st = new NetGuardState { ActiveProfile = "WoW" };
+        Assert.Equal(At(10, 20), Rules.StartBrowseWindow(cfg, st, At(10)));
+        Assert.True(Rules.BrowseWindowOpen(st, At(10, 19)));
+        Assert.False(Rules.CanStartBrowseWindow(cfg, st, At(10, 5)).Allowed);   // already open
+        var r = Rules.Tick(cfg, st, At(10, 20), TimeSpan.Zero);
+        Assert.Contains(r.Events, e => e.Type == "window-ended");
+        Assert.Null(st.BrowseWindowUntilUtc);
+
+        Rules.StartBrowseWindow(cfg, st, At(14));
+        st.BrowseWindowUntilUtc = null;
+        Assert.False(Rules.CanStartBrowseWindow(cfg, st, At(18)).Allowed);      // 2 per day used
+        Assert.True(Rules.CanStartBrowseWindow(cfg, st, At(18).AddDays(1)).Allowed);
+    }
+
+    [Fact]
+    public void Not_during_a_commitment()
+    {
+        var cfg = DefaultConfig.Create(new DetectedPaths());
+        var st = new NetGuardState { ActiveProfile = "Offline", Commitment = new Commitment { Profile = "Offline", UntilUtc = At(20) } };
+        Assert.False(Rules.CanStartBrowseWindow(cfg, st, At(10)).Allowed);
+    }
+
+    [Theory]
+    [InlineData("https://www.songsterr.com/a/wsa/foo-tab", "songsterr.com")]
+    [InlineData("ignition4.customsforge.com", "ignition4.customsforge.com")]
+    [InlineData("Dropbox.com/s/abc?dl=1", "dropbox.com")]
+    public void Website_entries_are_normalised(string input, string expected) =>
+        Assert.Equal(expected, NetGuard.Core.Editing.ConfigEditor.NormalizeSite(input));
+
+    [Fact]
+    public void Nonsense_websites_are_refused() =>
+        Assert.Throws<InvalidOperationException>(() => NetGuard.Core.Editing.ConfigEditor.NormalizeSite("not a site"));
+
+    [Fact]
+    public void Window_programs_get_allow_rules_on_top_of_the_profile()
+    {
+        using var env = new TestEnv();
+        var cfg = env.CreateStandardPc();
+        var chrome = env.Touch("CN=Google LLC, O=Google LLC", "Google", "chrome.exe");
+        cfg.BrowseWindow = new BrowseWindowConfig { Programs = { new ProgramEntry { Name = "Chrome", Paths = { chrome }, Pin = PinMode.Signature, Signer = "Google LLC" } } };
+        var engine = env.CreateEngine();
+        engine.ExtraAllowed = c => c.BrowseWindow!.Programs;
+        engine.ApplyProfile(cfg, "Offline", "test", null);
+        Assert.Contains(env.Firewall.Rules, r => r.Name == "NetGuard:Window:chrome.exe" && r.Action == NetGuard.Core.Firewall.FwAction.Allow);
+
+        engine.ExtraAllowed = null;
+        var heal = engine.Heal(cfg)!;
+        Assert.False(heal.WasTampered);
+        Assert.DoesNotContain(env.Firewall.Rules, r => r.Name.StartsWith("NetGuard:Window:"));
+    }
+}

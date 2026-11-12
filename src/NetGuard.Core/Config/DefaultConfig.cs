@@ -22,6 +22,46 @@ public static class DefaultConfig
     public const string BlizzardSigner = "Blizzard Entertainment";
     public const string SpotifySigner = "Spotify AB";
 
+    public const string GoogleSigner = "Google LLC";
+
+    /// <summary>Default "Bass check": Chrome (limited to these websites) and yt-dlp, 20 minutes, twice a day.</summary>
+    public static BrowseWindowConfig BrowseWindowDefault(string? usersDir = null)
+    {
+        var users = usersDir ?? @"%SystemDrive%\Users";
+        return new BrowseWindowConfig
+        {
+            Programs =
+            {
+                new ProgramEntry
+                {
+                    Name = "Chrome", Pin = PinMode.Signature, Signer = GoogleSigner,
+                    Paths =
+                    {
+                        @"%ProgramFiles%\Google\Chrome\Application\chrome.exe",
+                        @"%ProgramFiles(x86)%\Google\Chrome\Application\chrome.exe",
+                        users + @"\*\AppData\Local\Google\Chrome\Application\chrome.exe",
+                    },
+                },
+                new ProgramEntry { Name = "yt-dlp", Paths = { users + @"\*\yt-dlp.exe" } },
+            },
+            Websites =
+            {
+                // tabs
+                "songsterr.com",
+                // CDLC
+                "customsforge.com", "mediafire.com", "dropbox.com", "dropboxusercontent.com",
+                "drive.google.com", "drive.usercontent.google.com", "docs.google.com",
+                "mega.nz", "mega.io", "mega.co.nz", "onedrive.live.com", "1drv.ms", "sharepoint.com",
+                // the song's YouTube embed on Songsterr
+                "youtube.com", "youtube-nocookie.com", "ytimg.com", "googlevideo.com", "ggpht.com",
+                // what pages load in the background (fonts, scripts, CDNs, sign-in)
+                "gstatic.com", "googleapis.com", "cloudfront.net", "cloudflare.com", "jsdelivr.net", "accounts.google.com",
+                // Bass Trainer updates
+                "github.com", "api.github.com", "raw.githubusercontent.com", "objects.githubusercontent.com", "codeload.github.com",
+            },
+        };
+    }
+
     public static NetGuardConfig Create(DetectedPaths d)
     {
         var wowPaths = new List<string>();
@@ -45,6 +85,7 @@ public static class DefaultConfig
 
         return new NetGuardConfig
         {
+            BrowseWindow = BrowseWindowDefault(users),
             Profiles =
             {
                 new ProfileDefinition { Name = Offline, Kind = ProfileKind.Allowlist },

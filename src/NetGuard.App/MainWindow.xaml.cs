@@ -112,6 +112,8 @@ public partial class MainWindow : Window
             CountdownText.Text = TimeLeft(deadline - DateTimeOffset.UtcNow);
         if (_status?.Profiles.FirstOrDefault(x => x.IsActive)?.Play is { EndsUtc: { } pe })
             PlayLeftText.Text = TimeLeft(pe - ServerNow);
+        if (_status?.WindowUntilUtc is { } wu)
+            WindowLeftText.Text = TimeLeft(wu - ServerNow);
         UpdateUnlockPanel();
         if (IsVisible && Tabs.SelectedItem == HomeTab && DateTime.UtcNow - _statsLoaded > TimeSpan.FromMinutes(1))
         {
@@ -187,8 +189,18 @@ public partial class MainWindow : Window
             Banner.Background = Brush(Theme.ProfileColor(profile));
         }
         CountdownPanel.Visibility = s.TestDeadlineUtc != null ? Visibility.Visible : Visibility.Collapsed;
+        WindowPanel.Visibility = s.WindowUntilUtc != null ? Visibility.Visible : Visibility.Collapsed;
+        WindowLabel.Text = $"{s.WindowName} – time left";
+        if (s.WindowUntilUtc is { } wu && profile != null)
+            StatusDetail.Text = $"{s.WindowName} until {Fmt(wu)}: Chrome only reaches your list of websites, then everything closes again.";
+        WindowButton.Content = $"🎸 {s.WindowName} ({s.WindowMinutes} min)";
+        WindowButton.IsEnabled = s.WindowAllowed;
+        WindowButton.ToolTip = s.WindowHint;
+        WindowHintText.Text = s.WindowUntilUtc != null ? "" : s.WindowHint.EndsWith("left today") ? s.WindowHint : "";
+        WindowButton.Visibility = s.ActiveProfile != null && s.Profiles.FirstOrDefault(x => x.IsActive)?.Kind != "AllowAll"
+            ? Visibility.Visible : Visibility.Collapsed;
         var play = active?.Play;
-        PlayPanel.Visibility = s.TestDeadlineUtc == null && play is { Allowed: true, EndsUtc: not null } ? Visibility.Visible : Visibility.Collapsed;
+        PlayPanel.Visibility = s.TestDeadlineUtc == null && s.WindowUntilUtc == null && play is { Allowed: true, EndsUtc: not null } ? Visibility.Visible : Visibility.Collapsed;
         GraceButton.Visibility = play?.GraceAvailable == true ? Visibility.Visible : Visibility.Collapsed;
         GraceButton.Content = $"+{s.GraceMinutes} min (once today)";
         PlayLabel.Text = play?.GraceActive == true ? "Extra minutes left" : "Play time left";
@@ -476,6 +488,19 @@ public partial class MainWindow : Window
                 "Commit", MessageBoxButton.OKCancel, MessageBoxImage.Question) != MessageBoxResult.OK) return;
         await RunAsync("Commit", new IpcRequest { Command = IpcCommands.Commit, Profile = profile, Until = new DateTimeOffset(until) });
     }
+
+    private async void OnWindowStart(object sender, RoutedEventArgs e)
+    {
+        if (_status == null) return;
+        if (MessageBox.Show(this, $"Open {_status.WindowName} for {_status.WindowMinutes} minutes?\n\n" +
+                                  "Chrome gets internet, but only for your list of websites (Programs → " + _status.WindowName + "), " +
+                                  $"plus the other programs on that list. Afterwards everything closes again by itself.\n\n{_status.WindowHint}.",
+                _status.WindowName, MessageBoxButton.OKCancel, MessageBoxImage.Question) != MessageBoxResult.OK) return;
+        await RunAsync(_status.WindowName, new IpcRequest { Command = IpcCommands.WindowStart });
+    }
+
+    private async void OnWindowEnd(object sender, RoutedEventArgs e) =>
+        await RunAsync("Close", new IpcRequest { Command = IpcCommands.WindowEnd });
 
     // ================================================================ settings
 

@@ -377,6 +377,41 @@ public sealed class LockRules
         return change;
     }
 
+    // ================================================================ short window ("Bass check")
+
+    public BrowseWindowConfig Window(NetGuardConfig cfg) => cfg.BrowseWindow ?? DefaultConfig.BrowseWindowDefault();
+
+    private int WindowMinutes(NetGuardConfig cfg) => Practice ? 2 : Window(cfg).Minutes;
+
+    public bool BrowseWindowOpen(NetGuardState state, DateTimeOffset now) => state.BrowseWindowUntilUtc is { } u && u > now;
+
+    public int BrowseWindowsToday(NetGuardState state, DateTimeOffset now) =>
+        state.BrowseWindowStartsUtc.Count(t => Local(t).Date == Local(now).Date);
+
+    public SwitchDecision CanStartBrowseWindow(NetGuardConfig cfg, NetGuardState state, DateTimeOffset now)
+    {
+        var w = Window(cfg);
+        var active = state.ActiveProfile == null ? null : cfg.FindProfile(state.ActiveProfile);
+        if (active == null) return new(false, "You have normal internet – no need.");
+        if (active.Kind == ProfileKind.AllowAll) return new(false, "Maintenance already allows everything.");
+        if (BrowseWindowOpen(state, now)) return new(false, $"{w.Name} is already open.");
+        if (state.Commitment is { } c && c.UntilUtc > now)
+            return new(false, $"You committed to {c.Profile} until {LocalText(c.UntilUtc)}.");
+        var used = BrowseWindowsToday(state, now);
+        if (used >= w.PerDay) return new(false, $"Today's {w.PerDay}× {w.Name} are used up.");
+        return new(true, $"{w.PerDay - used} left today");
+    }
+
+    public DateTimeOffset StartBrowseWindow(NetGuardConfig cfg, NetGuardState state, DateTimeOffset now)
+    {
+        var d = CanStartBrowseWindow(cfg, state, now);
+        if (!d.Allowed) throw new InvalidOperationException(d.Reason);
+        state.BrowseWindowStartsUtc.Add(now);
+        state.BrowseWindowStartsUtc.RemoveAll(t => now - t > TimeSpan.FromDays(60));
+        state.BrowseWindowUntilUtc = now.AddMinutes(WindowMinutes(cfg));
+        return state.BrowseWindowUntilUtc.Value;
+    }
+
     // ================================================================ periodic work
 
     /// <summary>One pass: count play time, expire requests, apply due plan changes, end Maintenance / commitments / play time.</summary>
@@ -390,6 +425,14 @@ public sealed class LockRules
         {
             var secs = (int)Math.Min(elapsed.TotalSeconds, 300) * Speed;
             AddUsage(state.PlayUsage, active.Name, Local(now).Date, secs);
+            r.StateChanged = true;
+        }
+
+        // short window over
+        if (state.BrowseWindowUntilUtc is { } bw && bw <= now)
+        {
+            state.BrowseWindowUntilUtc = null;
+            r.Events.Add(new("window-ended", new { reason = $"{Window(cfg).Name} time is over" }));
             r.StateChanged = true;
         }
 
@@ -492,6 +535,7 @@ public sealed class LockRules
         var times = new List<DateTimeOffset?>
         {
             state.PendingUnlock?.ReadyUtc, state.PendingUnlock?.ExpiresUtc, state.Commitment?.UntilUtc, state.MaintenanceUntilUtc,
+            state.BrowseWindowUntilUtc,
         };
         times.AddRange(state.PendingPlanChanges.Select(c => (DateTimeOffset?)c.EffectiveUtc));
         foreach (var p in cfg.Profiles.Where(p => p.Plan != null))

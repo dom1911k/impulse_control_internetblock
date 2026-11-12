@@ -91,6 +91,20 @@ public sealed class PlayWindow
     }
 }
 
+/// <summary>
+/// "Bass check": a few minutes, a few times a day, on top of the active profile. Extra programs get internet,
+/// and Chrome is limited to <see cref="Websites"/> by Chrome's own website policy.
+/// </summary>
+public sealed class BrowseWindowConfig
+{
+    public string Name { get; set; } = "Bass check";
+    public int Minutes { get; set; } = 20;
+    public int PerDay { get; set; } = 2;
+    public List<ProgramEntry> Programs { get; set; } = new();
+    /// <summary>Chrome URL-allowlist entries (e.g. "songsterr.com" covers all its subdomains).</summary>
+    public List<string> Websites { get; set; } = new();
+}
+
 public sealed class TimingSettings
 {
     public int TestModeMinutes { get; set; } = 3;
@@ -130,6 +144,9 @@ public sealed class NetGuardConfig
     public List<string> ProtectedRuleGroups { get; set; } = new();
 
     public TimingSettings Timings { get; set; } = new();
+
+    /// <summary>A short window ("Bass check") with a few extra programs and a website allowlist for Chrome.</summary>
+    public BrowseWindowConfig? BrowseWindow { get; set; }
 
     public ProfileDefinition? FindProfile(string name) =>
         Profiles.FirstOrDefault(p => string.Equals(p.Name, name, StringComparison.OrdinalIgnoreCase));

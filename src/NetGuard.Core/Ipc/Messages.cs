@@ -45,6 +45,10 @@ public static class IpcCommands
     public const string PracticeEnd = "practice-end";
     public const string Summary = "summary";
     public const string Stats = "stats";
+    public const string WindowStart = "window-start";
+    public const string WindowEnd = "window-end";
+    public const string WebsiteAdd = "website-add";
+    public const string WebsiteRemove = "website-remove";
 }
 
 public sealed class IpcRequest
@@ -110,6 +114,12 @@ public sealed class StatusDto
     public DateTimeOffset? PracticeUntilUtc { get; set; }
     /// <summary>How many extra minutes the grace gives right now (1 in practice mode).</summary>
     public int GraceMinutes { get; set; }
+    /// <summary>The short window ("Bass check").</summary>
+    public string WindowName { get; set; } = "Bass check";
+    public int WindowMinutes { get; set; }
+    public DateTimeOffset? WindowUntilUtc { get; set; }
+    public bool WindowAllowed { get; set; }
+    public string WindowHint { get; set; } = "";
     public List<ProfileDto> Profiles { get; set; } = new();
 }
 
@@ -160,6 +170,9 @@ public sealed class ConfigDto
     public string LoosenHint { get; set; } = "";
     public List<ProfileConfigDto> Profiles { get; set; } = new();
     public ProfileConfigDto AlwaysBlocked { get; set; } = new();
+    public ProfileConfigDto Window { get; set; } = new();
+    public List<string> Websites { get; set; } = new();
+    public string WindowName { get; set; } = "Bass check";
 }
 
 public sealed class ProfileConfigDto

@@ -66,6 +66,10 @@ Rocksmith works in Steam Offline Mode.
   profile outside play time, game programs blocked in every profile outside play time, one 10-minute
   grace per day taken from the next day, looser plan changes after 72 h). All of it runs on a
   trusted clock that ignores changes to the Windows clock.
+* **Short window ("Bass check").** 20 minutes, twice a day, on top of the active profile: a few extra
+  programs (Chrome, yt-dlp, YT Downloader) get internet, and Chrome is limited to a website allowlist
+  through Chrome's own enterprise policy (`URLBlocklist=*`, `URLAllowlist=…` under
+  `HKLM\SOFTWARE\Policies\Google\Chrome`), which the service sets, self-heals and removes again.
 * **Everything is logged** as JSON lines in `C:\ProgramData\NetGuard\log.jsonl`. That folder is
   writable only by SYSTEM and Administrators; standard users can read the log.
 

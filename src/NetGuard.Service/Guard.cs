@@ -56,6 +56,12 @@ public sealed class Guard
             try { _engine.Log.Append(LogTypes.ClockJump, new { reason = $"The Windows clock was changed by {jump:g}; NetGuard keeps its own time." }, ServiceActor); } catch { }
         };
         _lastTick = _clock.Now;
+        // The short window ("Bass check") adds a few programs on top of the active profile.
+        _engine.ExtraAllowed = cfg =>
+        {
+            var st = _engine.LoadState();
+            return _rules.BrowseWindowOpen(st, _clock.Now) ? _rules.Window(cfg).Programs : Enumerable.Empty<ProgramEntry>();
+        };
         // Games outside their play time are blocked in every profile.
         _engine.ExtraBlocked = cfg =>
         {
@@ -69,7 +75,18 @@ public sealed class Guard
 
     public NetGuardConfig? TryLoadConfig()
     {
-        try { return File.Exists(_engine.Paths.ConfigFile) ? _engine.LoadConfig() : null; }
+        try
+        {
+            if (!File.Exists(_engine.Paths.ConfigFile)) return null;
+            var cfg = _engine.LoadConfig();
+            if (cfg.BrowseWindow == null)
+            {
+                // configs from before the short window existed get the default one
+                cfg.BrowseWindow = DefaultConfig.BrowseWindowDefault();
+                cfg.Save(_engine.Paths.ConfigFile);
+            }
+            return cfg;
+        }
         catch (Exception e) { _logger.LogError(e, "Config can't be read"); return null; }
     }
 
@@ -163,6 +180,28 @@ public sealed class Guard
         catch (Exception e) { _logger.LogDebug(e, "Couldn't check running games"); }
     }
 
+    /// <summary>While the short window is open, Chrome is limited to its websites; otherwise NetGuard's restriction is removed.</summary>
+    private void EnsureChromePolicy(NetGuardConfig cfg, NetGuardState state)
+    {
+        try
+        {
+            if (state.ActiveProfile != null && _rules.BrowseWindowOpen(state, Now))
+            {
+                if (ChromePolicy.Ensure(_rules.Window(cfg).Websites) && _chromePolicyWritten)
+                    _engine.Log.Append(LogTypes.Tamper, new { found = new[] { "Chrome's website restriction was changed" }, changes = new[] { "restored Chrome's website restriction" } }, ServiceActor);
+                _chromePolicyWritten = true;
+            }
+            else
+            {
+                ChromePolicy.Remove();
+                _chromePolicyWritten = false;
+            }
+        }
+        catch (Exception e) { ReportServiceError("chrome-policy", e.Message); }
+    }
+
+    private bool _chromePolicyWritten;
+
     private void SwitchInternal(NetGuardConfig cfg, string target, string actor, bool viaUnlock, string? autoReason = null)
     {
         var before = _engine.LoadState();
@@ -199,6 +238,7 @@ public sealed class Guard
 
                 RunRules(cfg);
                 state = _engine.LoadState();
+                EnsureChromePolicy(cfg, state);
                 if (state.ActiveProfile == null) return;
 
                 // Windows Firewall itself must run: if its services are stopped, no rule applies.
@@ -326,6 +366,9 @@ public sealed class Guard
                     IpcCommands.ProgramReapprove => Reapprove(req, caller),
                     IpcCommands.PracticeStart => PracticeStart(req, caller),
                     IpcCommands.PracticeEnd => EndPractice("ended by you", caller.Name),
+                    IpcCommands.WindowStart => WindowStart(caller),
+                    IpcCommands.WindowEnd => WindowEnd(caller),
+                    IpcCommands.WebsiteAdd or IpcCommands.WebsiteRemove => EditWebsites(req, caller),
                     IpcCommands.Stats => new IpcResponse
                     {
                         Ok = true,
@@ -404,6 +447,13 @@ public sealed class Guard
 
         var now = dto.ServerNowUtc;
         dto.GraceMinutes = _rules.T(cfg).GraceMinutes;
+        var win = _rules.Window(cfg);
+        var canWindow = _rules.CanStartBrowseWindow(cfg, state, now);
+        dto.WindowName = win.Name;
+        dto.WindowMinutes = _rules.Practice ? 2 : win.Minutes;
+        dto.WindowUntilUtc = _rules.BrowseWindowOpen(state, now) ? state.BrowseWindowUntilUtc : null;
+        dto.WindowAllowed = canWindow.Allowed;
+        dto.WindowHint = canWindow.Reason;
         dto.UnlocksLeftToday = Math.Max(0, cfg.Timings.MaxUnlockRequestsPerDay - _rules.UnlockRequestsToday(state, now));
         if (state.PendingUnlock is { } u)
             dto.Unlock = new UnlockDto
@@ -486,6 +536,7 @@ public sealed class Guard
         if (_engine.LoadState().ActiveProfile != null && CheckCode(req, caller) is { } refused) return refused;
         var before = _engine.LoadState();
         before.Commitment = null;
+        before.BrowseWindowUntilUtc = null;
         if (before.PendingUnlock is { } pu) { pu.Status = UnlockStatus.Cancelled; pu.ClosedUtc = Now; }
         _engine.SaveState(before);
         var (plan, result) = _engine.Recover("emergency restore with recovery code", caller.Name);
@@ -709,6 +760,14 @@ public sealed class Guard
                 Kind = "Block",
                 Programs = cfg.AlwaysBlocked.Select(e => ToDto(e, true)).ToList(),
             },
+            Window = new ProfileConfigDto
+            {
+                Name = ConfigEditor.WindowList,
+                Kind = "Window",
+                Programs = _rules.Window(cfg).Programs.Select(e => ToDto(e, false)).ToList(),
+            },
+            Websites = _rules.Window(cfg).Websites.ToList(),
+            WindowName = _rules.Window(cfg).Name,
         };
     }
 
@@ -931,6 +990,7 @@ public sealed class Guard
         public List<PendingPlanChange> PendingPlanChanges { get; set; } = new();
         public DateTimeOffset? LastMaintenanceUtc { get; set; }
         public Dictionary<string, Dictionary<string, int>> GameRunning { get; set; } = new();
+        public List<DateTimeOffset> BrowseWindowStartsUtc { get; set; } = new();
     }
 
     /// <summary>
@@ -951,6 +1011,7 @@ public sealed class Guard
             UnlockRequests = state.UnlockRequests, Commitment = state.Commitment, PlayUsage = state.PlayUsage,
             Graces = state.Graces, PendingPlanChanges = state.PendingPlanChanges, LastMaintenanceUtc = state.LastMaintenanceUtc,
             GameRunning = state.GameRunning,
+            BrowseWindowStartsUtc = state.BrowseWindowStartsUtc,
         };
         state.Practice = new PracticeSession
         {
@@ -981,6 +1042,8 @@ public sealed class Guard
             state.Commitment = snap.Commitment;
             state.PlayUsage = new Dictionary<string, Dictionary<string, int>>(snap.PlayUsage, StringComparer.OrdinalIgnoreCase);
             state.Graces = snap.Graces;
+            state.BrowseWindowStartsUtc = snap.BrowseWindowStartsUtc;
+            state.BrowseWindowUntilUtc = null;
             state.GameRunning = new Dictionary<string, Dictionary<string, int>>(snap.GameRunning, StringComparer.OrdinalIgnoreCase);
             // Plan changes made during practice are real decisions – keep them, but with the real waiting time.
             var practiceChanges = state.PendingPlanChanges.Where(c => !snap.PendingPlanChanges.Any(o => o.Id == c.Id)).ToList();
@@ -1000,5 +1063,60 @@ public sealed class Guard
         _engine.Log.Append(LogTypes.PracticeEnded, new { reason }, actor);
         Protect();
         return IpcResponse.Success("Practice mode ended. Normal internet is back, and nothing from practice counts.");
+    }
+
+    // ================================================================ short window ("Bass check")
+
+    private IpcResponse WindowStart(CallerInfo caller)
+    {
+        var cfg = RequireConfig();
+        var state = _engine.LoadState();
+        var until = _rules.StartBrowseWindow(cfg, state, Now);
+        _engine.SaveState(state);
+        var w = _rules.Window(cfg);
+        _engine.Log.Append(LogTypes.WindowStarted, new { profile = state.ActiveProfile, until = _rules.LocalText(until), reason = w.Name }, caller.Name);
+        _engine.Heal(cfg, caller.Name);     // the extra programs get internet now
+        EnsureChromePolicy(cfg, state);      // Chrome only reaches the listed websites
+        return IpcResponse.Success($"{w.Name} until {_rules.LocalText(until)}: " +
+                                   string.Join(", ", w.Programs.Select(p => p.Name)) + " may go online; Chrome only to your list of websites. " +
+                                   "If Chrome was already open, give it a few seconds.");
+    }
+
+    private IpcResponse WindowEnd(CallerInfo caller)
+    {
+        var cfg = RequireConfig();
+        var state = _engine.LoadState();
+        if (!_rules.BrowseWindowOpen(state, Now)) return IpcResponse.Fail("It isn't open.");
+        state.BrowseWindowUntilUtc = null;
+        _engine.SaveState(state);
+        _engine.Log.Append(LogTypes.WindowEnded, new { reason = "closed early" }, caller.Name);
+        if (state.ActiveProfile != null) _engine.Heal(cfg, caller.Name);
+        EnsureChromePolicy(cfg, state);
+        return IpcResponse.Success($"{_rules.Window(cfg).Name} closed.");
+    }
+
+    private IpcResponse EditWebsites(IpcRequest req, CallerInfo caller)
+    {
+        var cfg = RequireConfig();
+        var state = _engine.LoadState();
+        var site = req.Text ?? throw new ArgumentException("Which website?");
+        string change;
+        if (req.Command == IpcCommands.WebsiteAdd)
+        {
+            var d = ProfilePolicy.CanLoosenConfig(cfg, state.ActiveProfile);
+            if (!d.Allowed) return Refuse(caller, req, d.Reason.Replace("Adding programs", "Adding websites"));
+            var normalized = ConfigEditor.NormalizeSite(site);
+            ConfigEditor.AddWebsite(cfg, normalized);
+            change = $"website {normalized} added to {_rules.Window(cfg).Name}";
+        }
+        else
+        {
+            ConfigEditor.RemoveWebsite(cfg, site);
+            change = $"website {site} removed from {_rules.Window(cfg).Name}";
+        }
+        cfg.Save(_engine.Paths.ConfigFile);
+        _engine.Log.Append(LogTypes.ConfigChanged, new { change }, caller.Name);
+        EnsureChromePolicy(cfg, state);
+        return IpcResponse.Success(char.ToUpper(change[0]) + change[1..] + ".");
     }
 }

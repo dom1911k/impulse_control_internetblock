@@ -116,6 +116,10 @@ public sealed class NetGuardState
 
     public PracticeSession? Practice { get; set; }
 
+    /// <summary>The "Bass check" window is open until then.</summary>
+    public DateTimeOffset? BrowseWindowUntilUtc { get; set; }
+    public List<DateTimeOffset> BrowseWindowStartsUtc { get; set; } = new();
+
     public UnlockRequest? PendingUnlock => UnlockRequests.LastOrDefault(r => r.Status == UnlockStatus.Pending);
 
     public static NetGuardState Load(string path)
