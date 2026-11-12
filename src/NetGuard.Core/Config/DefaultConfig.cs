@@ -62,6 +62,38 @@ public static class DefaultConfig
         };
     }
 
+    /// <summary>"Update &amp; shut down": the Windows services that fetch updates (svchost-hosted).</summary>
+    public static IReadOnlyList<ServiceRuleEntry> UpdateServices { get; } = new[]
+    {
+        new ServiceRuleEntry { Id = "windows-update", Service = "wuauserv", Protocol = "Any" },
+        new ServiceRuleEntry { Id = "bits", Service = "BITS", Protocol = "Any" },
+        new ServiceRuleEntry { Id = "delivery-optimization", Service = "DoSvc", Protocol = "Any" },
+        new ServiceRuleEntry { Id = "update-orchestrator", Service = "UsoSvc", Protocol = "Any" },
+        new ServiceRuleEntry { Id = "update-medic", Service = "WaaSMedicSvc", Protocol = "Any" },
+        new ServiceRuleEntry { Id = "certificates", Service = "CryptSvc", Protocol = "Any" },
+    };
+
+    /// <summary>"Update &amp; shut down": the programs that fetch updates (Defender, the update worker).</summary>
+    public static IReadOnlyList<ProgramEntry> UpdatePrograms { get; } = new[]
+    {
+        new ProgramEntry
+        {
+            Name = "Microsoft Defender",
+            Paths =
+            {
+                @"%ProgramFiles%\Windows Defender\MpCmdRun.exe",
+                @"%ProgramFiles%\Windows Defender\MsMpEng.exe",
+                @"%ProgramData%\Microsoft\Windows Defender\Platform\*\MpCmdRun.exe",
+                @"%ProgramData%\Microsoft\Windows Defender\Platform\*\MsMpEng.exe",
+            },
+        },
+        new ProgramEntry
+        {
+            Name = "Windows Update",
+            Paths = { @"%SystemRoot%\System32\MoUsoCoreWorker.exe", @"%SystemRoot%\System32\usoclient.exe", @"%SystemRoot%\System32\SIHClient.exe" },
+        },
+    };
+
     public static NetGuardConfig Create(DetectedPaths d)
     {
         var wowPaths = new List<string>();

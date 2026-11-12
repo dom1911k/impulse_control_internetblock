@@ -120,6 +120,17 @@ public sealed class TimingSettings
     /// <summary>Looser play-plan changes take effect only after this many hours.</summary>
     public int PlanLoosenDelayHours { get; set; } = 72;
     public int MaxCommitmentDays { get; set; } = 30;
+
+    /// <summary>Night guard: from this hour to <see cref="NightGuardEndHour"/> only Offline (or stricter).</summary>
+    public int NightGuardStartHour { get; set; } = 1;
+    public int NightGuardEndHour { get; set; } = 10;
+    /// <summary>Each real tampering attempt during a lock extends the commitment by this much.</summary>
+    public int TamperPenaltyMinutes { get; set; } = 120;
+    public int MaxPenaltyMinutesPerDay { get; set; } = 720;
+    /// <summary>Bass practice (Rocksmith running) adds play time 1:1, up to this many minutes a day.</summary>
+    public int PracticeBonusCapMinutes { get; set; } = 60;
+    public int UpdateReminderDays { get; set; } = 30;
+    public int UpdateWindowMaxMinutes { get; set; } = 180;
 }
 
 public sealed class NetGuardConfig

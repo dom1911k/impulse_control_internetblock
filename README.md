@@ -70,6 +70,15 @@ Rocksmith works in Steam Offline Mode.
   programs (Chrome, yt-dlp, YT Downloader) get internet, and Chrome is limited to a website allowlist
   through Chrome's own enterprise policy (`URLBlocklist=*`, `URLAllowlist=…` under
   `HKLM\SOFTWARE\Policies\Google\Chrome`), which the service sets, self-heals and removes again.
+* **Update & shut down:** Windows Update services (svchost wuauserv/BITS/DoSvc/UsoSvc/WaaSMedicSvc/CryptSvc)
+  and Defender get allow rules for up to 3 hours; the service runs Windows Update through the WUA API
+  and Defender's definition update, then optionally shuts the PC down. Reminder after 30 days.
+* **Night guard** (01:00–10:00): only the plain Offline profile or stricter.
+* **Tamper penalty:** clear tampering during a lock extends the commitment by 2 h (max 12 h/day);
+  includes the service being killed (detected via uptime) and new SYSTEM scheduled tasks that run
+  shell tools (Task Scheduler API; such tasks are disabled).
+* **Bass practice bonus:** Rocksmith2014.exe running time adds play time 1:1 (max 1 h/day).
+* **Self-update in every profile:** NetGuard.Service.exe has a permanent TCP 443 allow rule (GitHub only).
 * **Everything is logged** as JSON lines in `C:\ProgramData\NetGuard\log.jsonl`. That folder is
   writable only by SYSTEM and Administrators; standard users can read the log.
 

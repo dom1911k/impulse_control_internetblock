@@ -82,6 +82,8 @@
 
                         <DockPanel Margin="0,0,14,10">
                             <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Center">
+                                <Button x:Name="UpdateButton" Content="🛠 Update &amp; shut down" Style="{StaticResource Secondary}" Margin="0,0,16,0" Click="OnUpdatesStart"
+                                        ToolTip="Windows Update and Defender get internet (nothing else), NetGuard installs all updates, then shuts the PC down."/>
                                 <TextBlock x:Name="WindowHintText" VerticalAlignment="Center" Margin="0,0,8,0" Foreground="{StaticResource Muted}" FontSize="12"/>
                                 <Button x:Name="WindowButton" Content="🎸 Bass check" Style="{StaticResource Secondary}" Margin="0,0,16,0" Click="OnWindowStart"/>
                                 <TextBlock x:Name="CommitText" VerticalAlignment="Center" Margin="0,0,12,0" Foreground="{StaticResource Muted}"/>

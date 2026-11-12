@@ -26,6 +26,25 @@ public sealed class PracticeSession
     public string Snapshot { get; set; } = "";
 }
 
+public sealed class PenaltyRecord
+{
+    public DateTimeOffset Utc { get; set; }
+    public int Minutes { get; set; }
+    public string Reason { get; set; } = "";
+}
+
+/// <summary>"Update &amp; shut down": Windows Update and Defender get internet for a while; the service runs the updates.</summary>
+public sealed class UpdateRunState
+{
+    public DateTimeOffset StartedUtc { get; set; }
+    public DateTimeOffset UntilUtc { get; set; }
+    public bool ShutdownWhenDone { get; set; } = true;
+    public string Phase { get; set; } = "starting";
+    public string Message { get; set; } = "";
+    public bool Done { get; set; }
+    public bool Failed { get; set; }
+}
+
 public enum UnlockStatus { Pending, Confirmed, Expired, Cancelled }
 
 public sealed class UnlockRequest
@@ -115,6 +134,20 @@ public sealed class NetGuardState
     public DateTimeOffset? TrustedNowUtc { get; set; }
 
     public PracticeSession? Practice { get; set; }
+
+    // ---- night guard, penalties, bass practice, updates
+    public List<PenaltyRecord> Penalties { get; set; } = new();
+    /// <summary>Seconds Rocksmith was running, per local date (yyyy-MM-dd).</summary>
+    public Dictionary<string, int> BassPractice { get; set; } = new();
+    public UpdateRunState? UpdateRun { get; set; }
+    public DateTimeOffset? LastUpdateRunUtc { get; set; }
+    /// <summary>False while the service runs; true after a clean stop. Used to notice the service being killed.</summary>
+    public bool ServiceStoppedCleanly { get; set; } = true;
+    public long LastTickUptimeMs { get; set; }
+    /// <summary>Scheduled tasks known to NetGuard (new SYSTEM tasks during a lock are checked).</summary>
+    public List<string> KnownTasks { get; set; } = new();
+    public string? LatestVersionSeen { get; set; }
+    public DateTimeOffset? LastUpdateCheckUtc { get; set; }
 
     /// <summary>The "Bass check" window is open until then.</summary>
     public DateTimeOffset? BrowseWindowUntilUtc { get; set; }

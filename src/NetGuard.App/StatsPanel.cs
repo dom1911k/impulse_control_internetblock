@@ -74,13 +74,15 @@ public sealed class StatsPanel : StackPanel
         Children.Add(head);
 
         foreach (var g in s.Games) Children.Add(Card(Game(g)));
+        Children.Add(Card(Bass(s)));
 
         // ---- streaks and counts
         var tiles = new UniformGrid { Columns = 4 };
         tiles.Children.Add(Tile("Days without an unlock request", s.DaysWithoutUnlockRequest.ToString(), s.DaysWithoutUnlockRequest >= 7 ? "great streak 👏" : null, "#2E7D6B"));
         tiles.Children.Add(Tile("Unlock requests (30 days)", s.UnlockRequests30Days.ToString(),
             s.UnlockRequestsTotal == 0 ? "none ever" : $"all time: {s.UnlocksConfirmed} confirmed, {s.UnlocksExpiredOrCancelled} let go"));
-        tiles.Children.Add(Tile("Commitments (30 days)", s.Commitments30Days.ToString(), null));
+        tiles.Children.Add(Tile("Commitments (30 days)", s.Commitments30Days.ToString(),
+            s.Penalties30Days > 0 ? $"{s.Penalties30Days} penalty extension(s), {H(s.PenaltyMinutes30Days)}" : "no penalties"));
         tiles.Children.Add(Tile("Firewall changes undone (30 days)", s.TamperUndone30Days.ToString(),
             s.EmergencyRestores > 0 ? $"emergency restores: {s.EmergencyRestores} (last {s.DaysSinceEmergencyRestore} days ago)" : "no emergency restores"));
         Children.Add(new Border { Margin = new Thickness(0, 0, 4, 4), Child = tiles });
@@ -112,6 +114,34 @@ public sealed class StatsPanel : StackPanel
             }
             Children.Add(Card(sp));
         }
+    }
+
+    private static UIElement Bass(StatsDto s)
+    {
+        var sp = new StackPanel();
+        sp.Children.Add(T("🎸 Bass practice (Rocksmith)", 18, true, null, new Thickness(0, 0, 0, 4)));
+        sp.Children.Add(T($"Every minute of Rocksmith adds a minute of play time today, up to {H(s.BassBonusCapMinutes)} a day.", 12, false, Muted, new Thickness(0, 0, 0, 10)));
+        var tiles = new UniformGrid { Columns = 4 };
+        tiles.Children.Add(Tile("Today", H(s.BassTodayMinutes), null, "#2E7D6B"));
+        tiles.Children.Add(Tile("Play time earned today", "+" + H(s.BassEarnedTodayMinutes), $"of +{H(s.BassBonusCapMinutes)} possible", "#2E7D6B"));
+        tiles.Children.Add(Tile("This week", H(s.BassWeekMinutes), null, "#2E7D6B"));
+        tiles.Children.Add(Tile("All time", H(s.BassAllTimeMinutes), null, "#2E7D6B"));
+        sp.Children.Add(tiles);
+        const double height = 70;
+        var max = Math.Max(30, s.BassLast30Days.Select(d => d.Minutes).DefaultIfEmpty(0).Max());
+        var bars = new UniformGrid { Rows = 1, Columns = s.BassLast30Days.Count, Height = height };
+        foreach (var d in s.BassLast30Days)
+        {
+            var cell = new Grid { Margin = new Thickness(1, 0, 1, 0), Background = Brushes.Transparent, ToolTip = $"{d.Date:ddd dd.MM.}: {H(d.Minutes)}" };
+            cell.Children.Add(new Border
+            {
+                VerticalAlignment = VerticalAlignment.Bottom, CornerRadius = new CornerRadius(2, 2, 0, 0),
+                Height = height * d.Minutes / max, Background = Brush(d.Date == DateTime.Today ? "#2E7D6B" : "#9CCBBE"),
+            });
+            bars.Children.Add(cell);
+        }
+        sp.Children.Add(bars);
+        return sp;
     }
 
     private static UIElement Game(GameStats g)

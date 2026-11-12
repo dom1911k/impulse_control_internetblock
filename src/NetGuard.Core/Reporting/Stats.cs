@@ -22,6 +22,16 @@ public sealed class StatsDto
     public int TamperUndone30Days { get; set; }
     public int EmergencyRestores { get; set; }
     public int? DaysSinceEmergencyRestore { get; set; }
+    public int Penalties30Days { get; set; }
+    public int PenaltyMinutes30Days { get; set; }
+
+    // bass practice (Rocksmith running)
+    public int BassTodayMinutes { get; set; }
+    public int BassWeekMinutes { get; set; }
+    public int BassAllTimeMinutes { get; set; }
+    public int BassEarnedTodayMinutes { get; set; }
+    public int BassBonusCapMinutes { get; set; }
+    public List<DayStat> BassLast30Days { get; set; } = new();
 }
 
 public sealed class GameStats
@@ -55,6 +65,9 @@ public sealed class DayStat
 /// <summary>Numbers for the dashboard. Practice-mode periods are left out.</summary>
 public static class StatsBuilder
 {
+    public static DateTimeOffset? FirstLogTime(IEnumerable<JsonObject> log) =>
+        log.Select(o => DateTimeOffset.TryParse((string?)o["ts"], out var t) ? t : (DateTimeOffset?)null).FirstOrDefault(t => t != null);
+
     public static bool IsGameProfile(ProfileDefinition p) =>
         p.Plan != null || p.Programs.Any(e => e.Name.Contains("Warcraft", StringComparison.OrdinalIgnoreCase));
 
@@ -120,6 +133,17 @@ public static class StatsBuilder
             if (start != null) { g.Sessions30Days++; g.LongestSessionMinutes = Math.Max(g.LongestSessionMinutes, (int)(nowUtc - start.Value).TotalMinutes); }
             dto.Games.Add(g);
         }
+
+        // ---- bass practice
+        int Bass(DateTime d) => state.BassPractice.TryGetValue(Key(d), out var s) ? s / 60 : 0;
+        dto.BassTodayMinutes = Bass(today);
+        dto.BassWeekMinutes = Enumerable.Range(0, 7).Select(i => weekStart.AddDays(i)).Where(d => d <= today).Sum(Bass);
+        dto.BassAllTimeMinutes = state.BassPractice.Values.Sum() / 60;
+        dto.BassBonusCapMinutes = cfg?.Timings.PracticeBonusCapMinutes ?? 60;
+        dto.BassEarnedTodayMinutes = Math.Min(dto.BassBonusCapMinutes, dto.BassTodayMinutes);
+        for (var i = 29; i >= 0; i--) dto.BassLast30Days.Add(new DayStat { Date = today.AddDays(-i), Minutes = Bass(today.AddDays(-i)) });
+        dto.Penalties30Days = state.Penalties.Count(p => p.Utc > nowUtc.AddDays(-30));
+        dto.PenaltyMinutes30Days = state.Penalties.Where(p => p.Utc > nowUtc.AddDays(-30)).Sum(p => p.Minutes);
 
         // ---- time per profile, last 7 days
         foreach (var (profile, _) in state.PlayUsage)

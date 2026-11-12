@@ -46,6 +46,8 @@ public static class IpcCommands
     public const string Summary = "summary";
     public const string Stats = "stats";
     public const string WindowStart = "window-start";
+    public const string UpdatesStart = "updates-start";
+    public const string UpdateCheck = "update-check";
     public const string WindowEnd = "window-end";
     public const string WebsiteAdd = "website-add";
     public const string WebsiteRemove = "website-remove";
@@ -120,6 +122,17 @@ public sealed class StatusDto
     public DateTimeOffset? WindowUntilUtc { get; set; }
     public bool WindowAllowed { get; set; }
     public string WindowHint { get; set; } = "";
+    public DateTimeOffset? NightGuardUntilUtc { get; set; }
+    public string NightProfile { get; set; } = "Offline";
+    /// <summary>"Update &amp; shut down" is running.</summary>
+    public string? UpdatePhase { get; set; }
+    public bool UpdateDue { get; set; }
+    public int? DaysSinceUpdate { get; set; }
+    public string? UpdateAvailableVersion { get; set; }
+    public int BassTodayMinutes { get; set; }
+    public int BassEarnedTodayMinutes { get; set; }
+    public int BassBonusCapMinutes { get; set; }
+    public int PenaltyMinutesToday { get; set; }
     public List<ProfileDto> Profiles { get; set; } = new();
 }
 

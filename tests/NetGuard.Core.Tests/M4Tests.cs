@@ -14,6 +14,7 @@ public class M4Tests
     private static NetGuardConfig Cfg(Action<PlayPlan>? plan = null)
     {
         var cfg = DefaultConfig.Create(new DetectedPaths());
+        cfg.Timings.NightGuardStartHour = cfg.Timings.NightGuardEndHour = 0; // night guard has its own tests
         if (plan != null)
         {
             var p = new PlayPlan { GamePrograms = { "World of Warcraft" } };

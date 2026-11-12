@@ -109,7 +109,7 @@ public sealed class LockRules
             if (plan.DailyLimitMinutes is not { } lim) return null;
             var debt = state.Graces.Any(g => g.Profile.Equals(profile.Name, StringComparison.OrdinalIgnoreCase) && g.Date == DateKey(day.AddDays(-1)))
                 ? T(cfg).GraceMinutes : 0;
-            return Math.Max(0, lim - debt);
+            return Math.Max(0, lim - debt + EarnedMinutes(cfg, state, day));
         }
 
         var usedTodaySec = Used(today);
@@ -121,7 +121,8 @@ public sealed class LockRules
             .OrderByDescending(w => w.EndMinute).FirstOrDefault();
 
         var remDaily = dailyLimit is { } dl ? dl * 60 - usedTodaySec : int.MaxValue;
-        var remWeek = plan.WeeklyLimitMinutes is { } wl ? wl * 60 - usedWeekSec : int.MaxValue;
+        var weekBonus = Enumerable.Range(0, 7).Select(i => weekStart.AddDays(i)).Where(d => d <= today).Sum(d => EarnedMinutes(cfg, state, d));
+        var remWeek = plan.WeeklyLimitMinutes is { } wl ? (wl + weekBonus) * 60 - usedWeekSec : int.MaxValue;
 
         DateTimeOffset? normalEnd = null;
         string reason;
@@ -167,10 +168,16 @@ public sealed class LockRules
         if (graceActive && (windowEnd == null || grace!.UntilUtc > windowEnd)) windowEnd = grace!.UntilUtc;
         var left = Math.Min(remDaily, remWeek);
         int? minutesLeft = left == int.MaxValue ? null : Math.Max(0, left) / 60;
-        return new PlayStatus(allowed, ends, next, usedTodaySec / 60, dailyLimit, usedWeekSec / 60, plan.WeeklyLimitMinutes,
+        return new PlayStatus(allowed, ends, next, usedTodaySec / 60, dailyLimit, usedWeekSec / 60, plan.WeeklyLimitMinutes + (plan.WeeklyLimitMinutes == null ? 0 : weekBonus),
             graceAvailable, graceActive, allowed ? reason : reason + (next is { } n ? $" Next play time: {LocalText(n)}." : ""),
             windowEnd, minutesLeft);
     }
+
+    /// <summary>Play time earned on a day by bass practice (Rocksmith running): 1:1, capped.</summary>
+    public int EarnedMinutes(NetGuardConfig cfg, NetGuardState state, DateTime localDay) =>
+        Math.Min(cfg.Timings.PracticeBonusCapMinutes, (state.BassPractice.TryGetValue(DateKey(localDay), out var s) ? s : 0) / 60);
+
+    public int EarnedToday(NetGuardConfig cfg, NetGuardState state, DateTimeOffset now) => EarnedMinutes(cfg, state, Local(now).Date);
 
     private static DateTimeOffset Min(DateTimeOffset a, DateTimeOffset b) => a < b ? a : b;
     private static DateTimeOffset Max(DateTimeOffset a, DateTimeOffset b) => a > b ? a : b;
@@ -212,6 +219,31 @@ public sealed class LockRules
         return m;
     }
 
+    // ================================================================ night guard
+
+    public bool IsNight(NetGuardConfig cfg, DateTimeOffset now)
+    {
+        var h = Local(now).Hour;
+        int a = cfg.Timings.NightGuardStartHour, b = cfg.Timings.NightGuardEndHour;
+        return a == b ? false : a < b ? h >= a && h < b : h >= a || h < b;
+    }
+
+    /// <summary>The profile the night guard (and penalties from Maintenance) fall back to: the strictest plain locking profile.</summary>
+    public ProfileDefinition NightProfile(NetGuardConfig cfg) =>
+        cfg.Profiles.FirstOrDefault(x => x.Kind == ProfileKind.Allowlist && x.Plan == null && x.Programs.Count == 0)
+        ?? cfg.Profiles.First(x => x.Kind == ProfileKind.Allowlist && x.Plan == null);
+
+    public DateTimeOffset NightEnds(NetGuardConfig cfg, DateTimeOffset now)
+    {
+        var l = Local(now);
+        var end = l.Date.AddHours(cfg.Timings.NightGuardEndHour);
+        if (end <= l) end = end.AddDays(1);
+        return Utc(end);
+    }
+
+    private string NightText(NetGuardConfig cfg, DateTimeOffset now) =>
+        $"Night guard until {LocalText(NightEnds(cfg, now))}: only {NightProfile(cfg).Name} or stricter.";
+
     // ================================================================ switching
 
     public SwitchDecision CanSwitch(NetGuardConfig cfg, NetGuardState state, string target, DateTimeOffset now)
@@ -219,6 +251,9 @@ public sealed class LockRules
         var t = cfg.FindProfile(target);
         if (t == null) return new(false, $"There is no profile called '{target}'.");
         var cur = state.ActiveProfile == null ? null : cfg.FindProfile(state.ActiveProfile);
+
+        if (IsNight(cfg, now) && !ProfilePolicy.IsAtLeastAsStrict(t, NightProfile(cfg)))
+            return new(false, NightText(cfg, now));
 
         if (t.Plan != null)
         {
@@ -244,6 +279,7 @@ public sealed class LockRules
         var cur = state.ActiveProfile == null ? null : cfg.FindProfile(state.ActiveProfile);
         if (cur == null) return new(false, "No lock is active.");
         if (state.TestMode != null) return new(false, "A test lock is running.");
+        if (IsNight(cfg, now)) return new(false, NightText(cfg, now));
         var t = cfg.FindProfile(target);
         if (t == null) return new(false, $"There is no profile called '{target}'.");
         if (t.Plan != null)
@@ -330,6 +366,36 @@ public sealed class LockRules
         return string.Equals(cur?.Name, p.Name, StringComparison.OrdinalIgnoreCase) ? null : p.Name;
     }
 
+    // ================================================================ tamper penalty
+
+    public int PenaltyMinutesToday(NetGuardState state, DateTimeOffset now) =>
+        state.Penalties.Where(p => Local(p.Utc).Date == Local(now).Date).Sum(p => p.Minutes);
+
+    /// <summary>
+    /// A real tampering attempt during a lock extends the commitment (or starts one) for the current profile.
+    /// Capped per day so a false alarm can't snowball. Returns the minutes added (0 = none).
+    /// </summary>
+    public int ApplyPenalty(NetGuardConfig cfg, NetGuardState state, string reason, DateTimeOffset now)
+    {
+        if (state.ActiveProfile == null || state.TestMode != null || Practice) return 0;
+        var minutes = Math.Min(cfg.Timings.TamperPenaltyMinutes, cfg.Timings.MaxPenaltyMinutesPerDay - PenaltyMinutesToday(state, now));
+        if (minutes <= 0) return 0;
+
+        var active = cfg.FindProfile(state.ActiveProfile);
+        var profile = active is { Kind: ProfileKind.Allowlist } ? active.Name : ResolveReturn(cfg, state, state.MaintenanceReturnTo, now);
+        if (state.Commitment is { } c && c.UntilUtc > now)
+        {
+            c.UntilUtc = c.UntilUtc.AddMinutes(minutes);
+            if (cfg.FindProfile(profile) is { } p && cfg.FindProfile(c.Profile) is { } cp && ProfilePolicy.IsAtLeastAsStrict(p, cp) && p.Name != cp.Name)
+                c.Profile = p.Name; // never looser than before
+        }
+        else state.Commitment = new Commitment { Profile = profile, UntilUtc = now.AddMinutes(minutes), CreatedUtc = now };
+        if (state.PendingUnlock is { } pending) { pending.Status = UnlockStatus.Cancelled; pending.ClosedUtc = now; }
+        state.Penalties.Add(new PenaltyRecord { Utc = now, Minutes = minutes, Reason = reason });
+        state.Penalties.RemoveAll(p => now - p.Utc > TimeSpan.FromDays(90));
+        return minutes;
+    }
+
     // ================================================================ grace
 
     public DateTimeOffset TakeGrace(NetGuardConfig cfg, NetGuardState state, string profile, DateTimeOffset now)
@@ -395,6 +461,7 @@ public sealed class LockRules
         if (active == null) return new(false, "You have normal internet – no need.");
         if (active.Kind == ProfileKind.AllowAll) return new(false, "Maintenance already allows everything.");
         if (BrowseWindowOpen(state, now)) return new(false, $"{w.Name} is already open.");
+        if (IsNight(cfg, now)) return new(false, NightText(cfg, now));
         if (state.Commitment is { } c && c.UntilUtc > now)
             return new(false, $"You committed to {c.Profile} until {LocalText(c.UntilUtc)}.");
         var used = BrowseWindowsToday(state, now);
@@ -433,6 +500,14 @@ public sealed class LockRules
         {
             state.BrowseWindowUntilUtc = null;
             r.Events.Add(new("window-ended", new { reason = $"{Window(cfg).Name} time is over" }));
+            r.StateChanged = true;
+        }
+
+        // "Update & shut down" window over
+        if (state.UpdateRun is { } ur && ur.UntilUtc <= now)
+        {
+            r.Events.Add(new("updates-window-ended", new { reason = ur.Done ? "updates finished" : "time limit reached" }));
+            state.UpdateRun = null;
             r.StateChanged = true;
         }
 
@@ -476,6 +551,14 @@ public sealed class LockRules
                 r.SwitchReason = "Maintenance time is over";
                 return r;
             }
+        }
+
+        // night guard: only the night profile or stricter
+        if (active != null && state.TestMode == null && IsNight(cfg, now) && !ProfilePolicy.IsAtLeastAsStrict(active, NightProfile(cfg)))
+        {
+            r.SwitchTo = NightProfile(cfg).Name;
+            r.SwitchReason = $"night guard ({cfg.Timings.NightGuardStartHour:00}:00–{cfg.Timings.NightGuardEndHour:00}:00)";
+            return r;
         }
 
         // play time over (test locks are left alone – they end by themselves)
@@ -535,7 +618,7 @@ public sealed class LockRules
         var times = new List<DateTimeOffset?>
         {
             state.PendingUnlock?.ReadyUtc, state.PendingUnlock?.ExpiresUtc, state.Commitment?.UntilUtc, state.MaintenanceUntilUtc,
-            state.BrowseWindowUntilUtc,
+            state.BrowseWindowUntilUtc, state.UpdateRun?.UntilUtc,
         };
         times.AddRange(state.PendingPlanChanges.Select(c => (DateTimeOffset?)c.EffectiveUtc));
         foreach (var p in cfg.Profiles.Where(p => p.Plan != null))
@@ -543,6 +626,13 @@ public sealed class LockRules
             var ps = GetPlayStatus(cfg, state, p, now);
             times.Add(ps.EndsUtc);
             times.Add(ps.NextStartUtc);
+        }
+        if (state.ActiveProfile != null)
+        {
+            var l = Local(now);
+            var start = l.Date.AddHours(cfg.Timings.NightGuardStartHour);
+            if (start <= l) start = start.AddDays(1);
+            times.Add(Utc(start));
         }
         return times.Where(t => t > now).Min();
     }

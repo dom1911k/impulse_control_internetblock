@@ -184,3 +184,77 @@ public class BrowseWindowTests
         Assert.DoesNotContain(env.Firewall.Rules, r => r.Name.StartsWith("NetGuard:Window:"));
     }
 }
+
+public class NightPenaltyBonusTests
+{
+    private static readonly NetGuard.Core.Rules.LockRules Rules = new(TimeZoneInfo.Utc);
+    private static DateTimeOffset At(int h, int m = 0) => new(2026, 11, 12, h, m, 0, TimeSpan.Zero);
+
+    private static NetGuardConfig EveryDay(int dailyLimit)
+    {
+        var cfg = DefaultConfig.Create(new DetectedPaths());
+        cfg.FindProfile("WoW")!.Plan = new PlayPlan
+        {
+            GamePrograms = { "World of Warcraft" }, DailyLimitMinutes = dailyLimit,
+            Windows = Enum.GetValues<DayOfWeek>().Select(d => new PlayWindow { Day = d, Start = "00:00", End = "24:00" }).ToList(),
+        };
+        return cfg;
+    }
+
+    [Fact]
+    public void Night_guard_from_1_to_10()
+    {
+        var cfg = EveryDay(600);
+        var st = new NetGuardState { ActiveProfile = "WoW" };
+        Assert.Null(Rules.Tick(cfg, st, At(0, 59), TimeSpan.Zero).SwitchTo);
+        Assert.Equal("Offline", Rules.Tick(cfg, st, At(1), TimeSpan.Zero).SwitchTo);
+        st.ActiveProfile = "Offline";
+        Assert.False(Rules.CanSwitch(cfg, st, "WoW", At(9, 59)).Allowed);
+        Assert.False(Rules.CanRequestUnlock(cfg, st, "Maintenance", At(3)).Allowed);
+        Assert.False(Rules.CanStartBrowseWindow(cfg, st, At(3)).Allowed);
+        Assert.True(Rules.CanSwitch(cfg, st, "WoW", At(10)).Allowed);
+        Assert.False(Rules.CanSwitch(cfg, new NetGuardState(), "WoW", At(2)).Allowed);   // also from normal internet
+        Assert.Null(Rules.Tick(cfg, new NetGuardState { ActiveProfile = "Offline" }, At(2), TimeSpan.Zero).SwitchTo);
+    }
+
+    [Fact]
+    public void Penalties_extend_the_commitment_and_are_capped()
+    {
+        var cfg = EveryDay(600);
+        var st = new NetGuardState { ActiveProfile = "WoW" };
+        Assert.Equal(120, Rules.ApplyPenalty(cfg, st, "firewall switched off", At(12)));
+        Assert.Equal("WoW", st.Commitment!.Profile);
+        Assert.Equal(At(14), st.Commitment.UntilUtc);
+        Assert.Equal(120, Rules.ApplyPenalty(cfg, st, "rule deleted", At(12, 5)));
+        Assert.Equal(At(16), st.Commitment.UntilUtc);
+        for (var i = 0; i < 4; i++) Rules.ApplyPenalty(cfg, st, "again", At(13));
+        Assert.Equal(0, Rules.ApplyPenalty(cfg, st, "too many", At(13)));        // 12 h per day
+        Assert.Equal(720, Rules.PenaltyMinutesToday(st, At(13)));
+        Assert.Equal(0, Rules.ApplyPenalty(cfg, new NetGuardState(), "no lock", At(12)));
+    }
+
+    [Fact]
+    public void Bass_practice_adds_play_time_up_to_an_hour()
+    {
+        var cfg = EveryDay(120);
+        var st = new NetGuardState { ActiveProfile = "Offline" };
+        var wow = cfg.FindProfile("WoW")!;
+        Assert.Equal(120, Rules.GetPlayStatus(cfg, st, wow, At(12)).DailyLimitMinutes);
+        st.BassPractice["2026-11-12"] = 25 * 60;
+        Assert.Equal(145, Rules.GetPlayStatus(cfg, st, wow, At(12)).DailyLimitMinutes);
+        st.BassPractice["2026-11-12"] = 200 * 60;
+        Assert.Equal(180, Rules.GetPlayStatus(cfg, st, wow, At(12)).DailyLimitMinutes);   // capped at +60
+        Assert.Equal(60, Rules.EarnedToday(cfg, st, At(12)));
+    }
+
+    [Fact]
+    public void Update_window_ends_by_itself()
+    {
+        var cfg = EveryDay(120);
+        var st = new NetGuardState { ActiveProfile = "Offline", UpdateRun = new UpdateRunState { StartedUtc = At(12), UntilUtc = At(15) } };
+        Assert.NotNull(st.UpdateRun);
+        var r = Rules.Tick(cfg, st, At(15), TimeSpan.Zero);
+        Assert.Null(st.UpdateRun);
+        Assert.Contains(r.Events, e => e.Type == "updates-window-ended");
+    }
+}

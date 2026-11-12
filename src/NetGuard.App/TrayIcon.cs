@@ -22,6 +22,7 @@ public sealed class TrayIcon : IDisposable
     private DateTimeOffset? _warnedUnlock;
     private DateTimeOffset? _warnedMaintenance;
     private DateTimeOffset? _warnedWindow;
+    private string? _announcedVersion;
     private readonly HashSet<(DateTimeOffset, int)> _warnedPlay = new();
 
     public TrayIcon(StatusMonitor monitor, Action open, Action exit)
@@ -56,7 +57,11 @@ public sealed class TrayIcon : IDisposable
         else
         {
             var play = s.Profiles.FirstOrDefault(p => p.IsActive)?.Play;
-            text = s.TestDeadlineUtc is { } d
+            text = s.UpdatePhase != null
+                ? $"NetGuard – updating Windows: {s.UpdatePhase}"
+                : s.NightGuardUntilUtc is { } ngu
+                    ? $"NetGuard – {s.ActiveProfile}, night guard until {ngu.ToLocalTime():HH:mm}"
+                : s.TestDeadlineUtc is { } d
                 ? $"NetGuard – {s.ActiveProfile} test lock until {d.ToLocalTime():t}"
                 : s.Unlock is { } u
                     ? $"NetGuard – {s.ActiveProfile}, unlock to {u.TargetProfile} pending"
@@ -115,6 +120,12 @@ public sealed class TrayIcon : IDisposable
                 var extra = play.GraceAvailable ? " You can take 10 more minutes once today (open NetGuard)." : "";
                 _icon.ShowBalloonTip(8000, "NetGuard", $"{mark} minute{(mark > 1 ? "s" : "")} of play time left.{extra}", Forms.ToolTipIcon.Warning);
             }
+        }
+
+        if (s.UpdateAvailableVersion is { } av && _announcedVersion != av)
+        {
+            _announcedVersion = av;
+            _icon.ShowBalloonTip(6000, "NetGuard", $"NetGuard {av} is available – Settings → Install update.", Forms.ToolTipIcon.Info);
         }
 
         if (s.WindowUntilUtc is { } wu && wu - now <= TimeSpan.FromMinutes(2) && wu > now && _warnedWindow != wu)

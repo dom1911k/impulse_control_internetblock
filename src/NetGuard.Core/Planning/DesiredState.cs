@@ -27,7 +27,8 @@ public static class DesiredStateBuilder
     public const string BrowseProfile = "Window";
 
     public static DesiredState Build(NetGuardConfig cfg, string profileName, ProgramResolver resolver, Func<string, string>? expandEnv = null,
-        IEnumerable<ProgramEntry>? extraBlocked = null, IEnumerable<ProgramEntry>? extraAllowed = null)
+        IEnumerable<ProgramEntry>? extraBlocked = null, IEnumerable<ProgramEntry>? extraAllowed = null,
+        IEnumerable<ProgramEntry>? alwaysAllowed = null, IEnumerable<ServiceRuleEntry>? extraServiceRules = null)
     {
         expandEnv ??= Environment.ExpandEnvironmentVariables;
         var profile = cfg.FindProfile(profileName)
@@ -82,7 +83,20 @@ public static class DesiredStateBuilder
             }
         }
 
-        // 2b) extra programs for a short window ("Bass check") on top of the profile
+        // 1b) system services for a while (Windows Update during "Update & shut down")
+        if (allowList)
+            foreach (var s in extraServiceRules ?? Enumerable.Empty<ServiceRuleEntry>())
+                d.Rules.Add(new RuleSpec($"{NetGuardNames.Prefix}Updates:{s.Id}", FwAction.Allow, expandEnv(s.Program), s.Service,
+                    FwProtocol.Parse(s.Protocol), string.IsNullOrWhiteSpace(s.RemotePorts) ? null : s.RemotePorts, $"{ManagedDescription} (updates)"));
+
+        // 1c) NetGuard's own service (update checks) – always
+        if (allowList)
+            foreach (var entry in alwaysAllowed ?? Enumerable.Empty<ProgramEntry>())
+                foreach (var r in resolver.Resolve(entry, checkPins: false))
+                    d.Rules.Add(new RuleSpec(names.Next("Self", r.Path), FwAction.Allow, r.Path, null, FwProtocol.Tcp, "443",
+                        $"{ManagedDescription} (NetGuard updates)"));
+
+        // 2b) extra programs for a short window ("Bass check", updates) on top of the profile
         if (allowList)
         {
             foreach (var entry in extraAllowed ?? Enumerable.Empty<ProgramEntry>())

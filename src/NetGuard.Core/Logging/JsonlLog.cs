@@ -38,6 +38,10 @@ public static class LogTypes
     public const string PracticeEnded = "practice-ended";
     public const string WindowStarted = "window-started";
     public const string WindowEnded = "window-ended";
+    public const string Penalty = "penalty";
+    public const string UpdatesStarted = "updates-started";
+    public const string UpdatesDone = "updates-done";
+    public const string UpdatesWindowEnded = "updates-window-ended";
 }
 
 /// <summary>Append-only JSON-lines log (one JSON object per line).</summary>

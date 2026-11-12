@@ -37,6 +37,7 @@ public sealed class Guard
     private readonly IHostApplicationLifetime _lifetime;
 
     private readonly LockRules _rules = new();
+    private readonly System.Collections.Concurrent.ConcurrentQueue<string> _pendingPenalties = new();
     private readonly TrustedClock _clock;
     private DateTimeOffset _lastTick;
 
@@ -53,15 +54,30 @@ public sealed class Guard
         _clock = TrustedClock.System(initial.TrustedNowUtc);
         _clock.JumpDetected += jump =>
         {
-            try { _engine.Log.Append(LogTypes.ClockJump, new { reason = $"The Windows clock was changed by {jump:g}; NetGuard keeps its own time." }, ServiceActor); } catch { }
+            try
+            {
+                _engine.Log.Append(LogTypes.ClockJump, new { reason = $"The Windows clock was changed by {jump:g}; NetGuard keeps its own time." }, ServiceActor);
+                _pendingPenalties.Enqueue("the Windows clock was changed");
+            }
+            catch { }
         };
         _lastTick = _clock.Now;
         // The short window ("Bass check") adds a few programs on top of the active profile.
         _engine.ExtraAllowed = cfg =>
         {
             var st = _engine.LoadState();
-            return _rules.BrowseWindowOpen(st, _clock.Now) ? _rules.Window(cfg).Programs : Enumerable.Empty<ProgramEntry>();
+            var list = new List<ProgramEntry>();
+            if (_rules.BrowseWindowOpen(st, _clock.Now)) list.AddRange(_rules.Window(cfg).Programs);
+            if (st.UpdateRun is { } ur && ur.UntilUtc > _clock.Now) list.AddRange(DefaultConfig.UpdatePrograms);
+            return list;
         };
+        _engine.ExtraServiceRules = cfg =>
+        {
+            var st = _engine.LoadState();
+            return st.UpdateRun is { } ur && ur.UntilUtc > _clock.Now ? DefaultConfig.UpdateServices : Enumerable.Empty<ServiceRuleEntry>();
+        };
+        // NetGuard's own service may always reach GitHub over HTTPS, so bug fixes can be installed during any lock.
+        _engine.AlwaysAllowed = _ => new[] { new ProgramEntry { Name = "NetGuard service", Paths = { Path.Combine(ProgramDir, "NetGuard.Service.exe") } } };
         // Games outside their play time are blocked in every profile.
         _engine.ExtraBlocked = cfg =>
         {
@@ -138,7 +154,9 @@ public sealed class Guard
         var state = _engine.LoadState();
         var r = _rules.Tick(cfg, state, now, elapsed);
         TrackRunningGames(cfg, state, now, elapsed);
+        while (_pendingPenalties.TryDequeue(out var why)) Penalize(cfg, state, why);
         state.TrustedNowUtc = now;
+        state.LastTickUptimeMs = Environment.TickCount64;
         _engine.SaveState(state);
         if (r.ConfigChanged) cfg.Save(_engine.Paths.ConfigFile);
         foreach (var e in r.Events) _engine.Log.Append(e.Type, e.Data, ServiceActor);
@@ -176,6 +194,14 @@ public sealed class Guard
             foreach (var (profile, exes) in _gameProcessNames)
                 if (exes.Any(names.Contains))
                     LockRules.AddUsage(state.GameRunning, profile, day, secs);
+            // bass practice: Rocksmith running earns play time (1:1, capped)
+            if (names.Contains("Rocksmith2014"))
+            {
+                var key = LockRules.DateKey(day);
+                state.BassPractice[key] = (state.BassPractice.TryGetValue(key, out var b) ? b : 0) + secs;
+                foreach (var old in state.BassPractice.Keys.Where(k => string.CompareOrdinal(k, LockRules.DateKey(day.AddDays(-LockRules.KeepUsageDays))) < 0).ToList())
+                    state.BassPractice.Remove(old);
+            }
         }
         catch (Exception e) { _logger.LogDebug(e, "Couldn't check running games"); }
     }
@@ -201,6 +227,53 @@ public sealed class Guard
     }
 
     private bool _chromePolicyWritten;
+    private DateTime _lastTaskScan = DateTime.MinValue;
+
+    /// <summary>
+    /// The known way around self-protection: a scheduled task that runs a command as SYSTEM. New SYSTEM tasks
+    /// that start a shell or script tool during a lock are switched off and count as tampering.
+    /// Tasks that start normal programs (installers, updaters) are only remembered.
+    /// </summary>
+    private void ScanTasks(NetGuardConfig cfg)
+    {
+        try
+        {
+            var tasks = TaskWatcher.List();
+            var state = _engine.LoadState();
+            var known = state.KnownTasks.ToHashSet(StringComparer.OrdinalIgnoreCase);
+            var first = known.Count == 0;
+            foreach (var t in tasks.Where(t => !known.Contains(t.Path)))
+            {
+                state.KnownTasks.Add(t.Path);
+                if (first || state.ActiveProfile == null || TaskWatcher.IsExempt(t) || !TaskWatcher.RunsAsSystem(t) || !TaskWatcher.RunsShellTool(t)) continue;
+                TaskWatcher.Disable(t.Path);
+                _engine.Log.Append(LogTypes.Tamper, new { found = new[] { $"new SYSTEM task {t.Path}: {t.Actions}" }, changes = new[] { $"switched off task {t.Path}" } }, ServiceActor);
+                Penalize(cfg, state, "a scheduled task was set up to run commands as SYSTEM");
+            }
+            if (state.KnownTasks.Count > 2000) state.KnownTasks = tasks.Select(t => t.Path).ToList();
+            _engine.SaveState(state);
+        }
+        catch (Exception e) { _logger.LogDebug(e, "Task scan failed"); }
+    }
+
+    /// <summary>Tamper penalty: extend the commitment (state is saved by the caller).</summary>
+    private void Penalize(NetGuardConfig cfg, NetGuardState state, string why)
+    {
+        var minutes = _rules.ApplyPenalty(cfg, state, why, Now);
+        if (minutes <= 0) return;
+        state.LastTamperUtc = Now;
+        _engine.Log.Append(LogTypes.Penalty, new
+        {
+            reason = why, minutes, until = _rules.LocalText(state.Commitment!.UntilUtc), profile = state.Commitment.Profile,
+        }, ServiceActor);
+    }
+
+    private void PenalizeNow(NetGuardConfig cfg, string why)
+    {
+        var st = _engine.LoadState();
+        Penalize(cfg, st, why);
+        _engine.SaveState(st);
+    }
 
     private void SwitchInternal(NetGuardConfig cfg, string target, string actor, bool viaUnlock, string? autoReason = null)
     {
@@ -249,9 +322,16 @@ public sealed class Guard
                     catch (Exception e) { _logger.LogWarning(e, "Could not check {Service}", svc); }
                 }
                 if (found.Count > 0)
+                {
                     _engine.Log.Append(LogTypes.Tamper, new { profile = state.ActiveProfile, found, changes = found.Select(f => "restarted: " + f).ToList() }, ServiceActor);
+                    PenalizeNow(cfg, "the Windows Firewall service was stopped");
+                }
 
                 var heal = _engine.Heal(cfg, ServiceActor);
+                // Penalty only for clear tampering – not for new allow rules, which program installers add too (those are just undone).
+                var serious = heal?.Tamper.FirstOrDefault(a => a is not NetGuard.Core.Planning.DisableForeignRuleAction);
+                if (serious != null) PenalizeNow(cfg, serious.Describe());
+                if (DateTime.UtcNow - _lastTaskScan > TimeSpan.FromMinutes(2)) { _lastTaskScan = DateTime.UtcNow; ScanTasks(cfg); }
                 if (heal is { Plan.IsEmpty: false })
                     _logger.LogWarning("Healed {Count} difference(s); tamper={Tamper}", heal.Plan.Actions.Count, heal.WasTampered);
             }
@@ -367,6 +447,8 @@ public sealed class Guard
                     IpcCommands.PracticeStart => PracticeStart(req, caller),
                     IpcCommands.PracticeEnd => EndPractice("ended by you", caller.Name),
                     IpcCommands.WindowStart => WindowStart(caller),
+                    IpcCommands.UpdatesStart => UpdatesStart(req, caller),
+                    IpcCommands.UpdateCheck => UpdateCheck(),
                     IpcCommands.WindowEnd => WindowEnd(caller),
                     IpcCommands.WebsiteAdd or IpcCommands.WebsiteRemove => EditWebsites(req, caller),
                     IpcCommands.Stats => new IpcResponse
@@ -412,6 +494,7 @@ public sealed class Guard
                 return Refuse(caller, req, $"Too many wrong recovery codes. Try again in an hour.");
             default:
                 _engine.Log.Append(LogTypes.RecoveryCodeWrong, new { request = req.Command }, caller.Name);
+                if (state.WrongCodeAttemptsUtc.Count >= 2 && TryLoadConfig() is { } pc) PenalizeNow(pc, "wrong recovery code (again)");
                 var left = RecoveryCode.MaxWrongAttemptsPerHour - state.WrongCodeAttemptsUtc.Count;
                 return IpcResponse.Fail($"That recovery code is not right. {left} attempt(s) left this hour.");
         }
@@ -454,6 +537,18 @@ public sealed class Guard
         dto.WindowUntilUtc = _rules.BrowseWindowOpen(state, now) ? state.BrowseWindowUntilUtc : null;
         dto.WindowAllowed = canWindow.Allowed;
         dto.WindowHint = canWindow.Reason;
+        dto.NightProfile = _rules.NightProfile(cfg).Name;
+        dto.NightGuardUntilUtc = _rules.IsNight(cfg, now) ? _rules.NightEnds(cfg, now) : null;
+        if (state.UpdateRun is { } run && run.UntilUtc > now) dto.UpdatePhase = run.Message.Length > 0 ? run.Message : run.Phase;
+        var lastUpdate = new[] { state.LastUpdateRunUtc, state.LastMaintenanceUtc }.Where(x => x != null).DefaultIfEmpty(null).Max();
+        dto.DaysSinceUpdate = lastUpdate is { } lu ? (int)(now - lu).TotalDays : null;
+        var since = lastUpdate ?? StatsBuilder.FirstLogTime(_engine.Log.ReadAll().Take(1)) ?? now;
+        dto.UpdateDue = now - since > TimeSpan.FromDays(cfg.Timings.UpdateReminderDays);
+        dto.UpdateAvailableVersion = state.LatestVersionSeen is { } lv && Version.TryParse(lv, out var v) && v > GitHubReleases.CurrentVersion ? lv : null;
+        dto.BassTodayMinutes = (state.BassPractice.TryGetValue(LockRules.DateKey(TimeZoneInfo.ConvertTime(now, TimeZoneInfo.Local).Date), out var bs) ? bs : 0) / 60;
+        dto.BassEarnedTodayMinutes = _rules.EarnedToday(cfg, state, now);
+        dto.BassBonusCapMinutes = cfg.Timings.PracticeBonusCapMinutes;
+        dto.PenaltyMinutesToday = _rules.PenaltyMinutesToday(state, now);
         dto.UnlocksLeftToday = Math.Max(0, cfg.Timings.MaxUnlockRequestsPerDay - _rules.UnlockRequestsToday(state, now));
         if (state.PendingUnlock is { } u)
             dto.Unlock = new UnlockDto
@@ -461,11 +556,7 @@ public sealed class Guard
                 TargetProfile = u.TargetProfile, Reason = u.Reason, RequestedUtc = u.RequestedUtc, ReadyUtc = u.ReadyUtc, ExpiresUtc = u.ExpiresUtc,
                 Passage = now >= u.ReadyUtc ? u.Passage : null,
             };
-        if (state.ActiveProfile != null)
-        {
-            var since = state.LastMaintenanceUtc ?? state.ActiveSinceUtc ?? now;
-            dto.MaintenanceReminder = now - since > TimeSpan.FromDays(cfg.Timings.MaintenanceReminderDays);
-        }
+        dto.MaintenanceReminder = false; // replaced by UpdateDue ("Update & shut down")
         if (_engine.LastDesired is { } ld && string.Equals(ld.ProfileName, state.ActiveProfile, StringComparison.OrdinalIgnoreCase))
             dto.RejectedFiles = ld.RejectedPrograms.Select(r => $"{r.EntryName}: {r.Path} – {r.Detail}").ToList();
 
@@ -671,12 +762,8 @@ public sealed class Guard
     /// </summary>
     private IpcResponse Update(CallerInfo caller)
     {
-        var state = _engine.LoadState();
-        var cfg = TryLoadConfig();
-        var active = state.ActiveProfile == null ? null : cfg?.FindProfile(state.ActiveProfile);
-        if (active != null && active.Kind != ProfileKind.AllowAll)
-            return IpcResponse.Fail("Updates can be installed with normal internet or in Maintenance.");
-
+        // NetGuard updates are allowed in every profile (the service has its own HTTPS rule for GitHub),
+        // so fixes for fundamental bugs can always be installed.
         var release = Updater.CheckLatestAsync().GetAwaiter().GetResult();
         if (release.Version <= GitHubReleases.CurrentVersion)
             return IpcResponse.Success($"NetGuard is up to date ({GitHubReleases.CurrentVersion}).");
@@ -1118,5 +1205,125 @@ public sealed class Guard
         _engine.Log.Append(LogTypes.ConfigChanged, new { change }, caller.Name);
         EnsureChromePolicy(cfg, state);
         return IpcResponse.Success(char.ToUpper(change[0]) + change[1..] + ".");
+    }
+
+    // ================================================================ "Update & shut down"
+
+    private Task? _updateTask;
+
+    private IpcResponse UpdatesStart(IpcRequest req, CallerInfo caller)
+    {
+        var cfg = RequireConfig();
+        var state = _engine.LoadState();
+        if (_updateTask is { IsCompleted: false }) return IpcResponse.Fail("Updates are already running.");
+        var now = Now;
+        state.UpdateRun = new UpdateRunState
+        {
+            StartedUtc = now, UntilUtc = now.AddMinutes(cfg.Timings.UpdateWindowMaxMinutes), ShutdownWhenDone = req.On ?? true,
+            Phase = "starting", Message = "Starting…",
+        };
+        _engine.SaveState(state);
+        _engine.Log.Append(LogTypes.UpdatesStarted, new { reason = state.UpdateRun.ShutdownWhenDone ? "then shut down" : "no shutdown" }, caller.Name);
+        if (state.ActiveProfile != null) _engine.Heal(cfg, caller.Name);   // Windows Update + Defender get internet now
+        var shutdown = state.UpdateRun.ShutdownWhenDone;
+        _updateTask = Task.Run(() => RunUpdates(shutdown));
+        return IpcResponse.Success("Updating Windows and Defender" + (shutdown ? " – the PC shuts down when it's done." : "."));
+    }
+
+    private void SetUpdateProgress(string message, bool done = false, bool failed = false)
+    {
+        lock (_gate)
+        {
+            var st = _engine.LoadState();
+            if (st.UpdateRun == null) return;
+            st.UpdateRun.Message = message;
+            st.UpdateRun.Done = done;
+            st.UpdateRun.Failed = failed;
+            if (done)
+            {
+                st.UpdateRun.UntilUtc = Now; // close the window: nothing gets internet any more
+                st.LastUpdateRunUtc = Now;
+            }
+            _engine.SaveState(st);
+        }
+    }
+
+    private void RunUpdates(bool shutdown)
+    {
+        var summary = new List<string>();
+        try
+        {
+            Thread.Sleep(TimeSpan.FromSeconds(5)); // let the firewall rules settle
+            SetUpdateProgress("Updating Defender definitions…");
+            summary.Add(WindowsUpdater.UpdateDefender(TimeSpan.FromMinutes(10)));
+            var r = WindowsUpdater.RunWindowsUpdate(m => SetUpdateProgress(m), CancellationToken.None);
+            summary.Add(r.Summary);
+            SetUpdateProgress(shutdown ? "Done – shutting down in 60 seconds." : "Done.", done: true);
+        }
+        catch (Exception e)
+        {
+            summary.Add("Windows Update didn't work: " + e.Message);
+            SetUpdateProgress("Updates didn't finish: " + e.Message, done: true, failed: true);
+        }
+        lock (_gate)
+        {
+            _engine.Log.Append(LogTypes.UpdatesDone, new { reason = string.Join(" ", summary.Select(x => x.Split('\n')[0])) }, ServiceActor);
+            if (TryLoadConfig() is { } cfg && _engine.LoadState().ActiveProfile != null) _engine.Heal(cfg, ServiceActor);
+        }
+        if (shutdown) WindowsUpdater.ShutDown(60);
+    }
+
+    private IpcResponse UpdateCheck()
+    {
+        var release = Updater.CheckLatestAsync().GetAwaiter().GetResult();
+        var st = _engine.LoadState();
+        st.LatestVersionSeen = release.Version.ToString();
+        st.LastUpdateCheckUtc = Now;
+        _engine.SaveState(st);
+        return release.Version <= GitHubReleases.CurrentVersion
+            ? IpcResponse.Success($"NetGuard is up to date ({GitHubReleases.CurrentVersion}).")
+            : IpcResponse.Success($"Version {release.Version} is available (you have {GitHubReleases.CurrentVersion}).");
+    }
+
+    /// <summary>Once a day: is there a newer NetGuard? (Shown in Settings and the tray.)</summary>
+    public void DailyUpdateCheck()
+    {
+        try
+        {
+            var st = _engine.LoadState();
+            if (st.LastUpdateCheckUtc is { } last && Now - last < TimeSpan.FromHours(24)) return;
+            lock (_gate) UpdateCheck();
+        }
+        catch (Exception e) { _logger.LogDebug(e, "Update check failed"); }
+    }
+
+    /// <summary>At service start: notice if the service was killed (not a restart of Windows), and close a stale update window.</summary>
+    public void OnServiceStart()
+    {
+        lock (_gate)
+        {
+            var st = _engine.LoadState();
+            var cfg = TryLoadConfig();
+            var killed = !st.ServiceStoppedCleanly && st.LastTickUptimeMs > 0 && Environment.TickCount64 > st.LastTickUptimeMs;
+            if (st.UpdateRun != null && _updateTask == null) st.UpdateRun.UntilUtc = Now;
+            st.ServiceStoppedCleanly = false;
+            if (killed && st.ActiveProfile != null && cfg != null)
+            {
+                _engine.Log.Append(LogTypes.Tamper, new { found = new[] { "the NetGuard service was ended forcefully" }, changes = new[] { "Windows restarted it" } }, ServiceActor);
+                Penalize(cfg, st, "the NetGuard service was ended forcefully");
+            }
+            _engine.SaveState(st);
+        }
+    }
+
+    public void OnServiceStop()
+    {
+        try
+        {
+            var st = _engine.LoadState();
+            st.ServiceStoppedCleanly = true;
+            _engine.SaveState(st);
+        }
+        catch { }
     }
 }

@@ -62,8 +62,15 @@ public sealed class Engine
     /// <summary>Extra programs to allow right now (the short "Bass check" window). Set by the service.</summary>
     public Func<NetGuardConfig, IEnumerable<ProgramEntry>>? ExtraAllowed { get; set; }
 
+    /// <summary>Always allowed on HTTPS (NetGuard's own service, for update checks). Set by the service.</summary>
+    public Func<NetGuardConfig, IEnumerable<ProgramEntry>>? AlwaysAllowed { get; set; }
+
+    /// <summary>System services allowed right now (Windows Update during "Update &amp; shut down"). Set by the service.</summary>
+    public Func<NetGuardConfig, IEnumerable<ServiceRuleEntry>>? ExtraServiceRules { get; set; }
+
     public DesiredState BuildDesired(NetGuardConfig cfg, string profile) =>
-        LastDesired = DesiredStateBuilder.Build(cfg, profile, _resolver, _expandEnv, ExtraBlocked?.Invoke(cfg), ExtraAllowed?.Invoke(cfg));
+        LastDesired = DesiredStateBuilder.Build(cfg, profile, _resolver, _expandEnv, ExtraBlocked?.Invoke(cfg), ExtraAllowed?.Invoke(cfg),
+            AlwaysAllowed?.Invoke(cfg), ExtraServiceRules?.Invoke(cfg));
 
     public Plan PlanApply(NetGuardConfig cfg, DesiredState desired) =>
         Planner.Diff(desired, _fw.GetSnapshot(), HostsFile.IsUpToDate(ReadHosts(), desired.BlockedHosts), cfg.ProtectedRuleGroups);

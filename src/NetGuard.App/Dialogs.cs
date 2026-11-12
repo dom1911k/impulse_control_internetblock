@@ -302,4 +302,28 @@ public static class Dialogs
         w.Content = dock;
         w.ShowDialog();
     }
+
+    /// <summary>"Update &amp; shut down": returns whether to shut down afterwards, or null if cancelled.</summary>
+    public static bool? AskUpdateAndShutdown(Window owner)
+    {
+        var w = NewWindow(owner, "Update & shut down", 540);
+        var shutdown = new CheckBox { Content = "Shut the PC down when the updates are done", IsChecked = true, FontSize = 14, Margin = new Thickness(0, 0, 0, 18) };
+        var ok = Btn("Start", true, w);
+        var cancel = Btn("Cancel", false, w);
+        ok.IsDefault = true;
+        cancel.IsCancel = true;
+        ok.Click += (_, _) => { w.DialogResult = true; };
+        var buttons = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Right };
+        buttons.Children.Add(ok);
+        buttons.Children.Add(cancel);
+        var panel = new StackPanel { Margin = new Thickness(24) };
+        panel.Children.Add(Text("Update Windows and Defender", 18, FontWeights.SemiBold));
+        panel.Children.Add(Text("Windows Update and Defender get internet for a while – nothing else does. NetGuard installs all available " +
+                                "updates (this can take 10–60 minutes; you can see the progress at the top of the window)."));
+        panel.Children.Add(Text("If you let it shut down, you get 60 seconds to cancel (Win+R → shutdown /a). Updates that need a restart finish while the PC shuts down."));
+        panel.Children.Add(shutdown);
+        panel.Children.Add(buttons);
+        w.Content = panel;
+        return w.ShowDialog() == true ? shutdown.IsChecked == true : null;
+    }
 }

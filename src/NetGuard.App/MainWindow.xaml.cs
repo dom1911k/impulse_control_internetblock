@@ -28,7 +28,6 @@ public partial class MainWindow : Window
     private string _serviceProblem = "";
     private bool _busy;
     private bool _allowClose;
-    private ReleaseInfo? _latest;
     private string _cardsSignature = "";
     private DateTime _statsLoaded = DateTime.MinValue;
 
@@ -188,6 +187,17 @@ public partial class MainWindow : Window
                         : $"Since {Fmt(s.ActiveSinceUtc ?? DateTimeOffset.UtcNow)}. NetGuard keeps it in place.";
             Banner.Background = Brush(Theme.ProfileColor(profile));
         }
+        if (s.NightGuardUntilUtc is { } ng && profile != null)
+            StatusDetail.Text = $"🌙 Night guard until {Fmt(ng)} – only {s.NightProfile} or stricter. Updates still work.";
+        if (s.UpdatePhase != null)
+            StatusDetail.Text = $"🛠 Updating Windows: {s.UpdatePhase}";
+        UpdateButton.IsEnabled = s.UpdatePhase == null;
+        UpdateButton.Background = Brush(s.UpdateDue ? "#B03A2E" : "#FFFFFF");
+        UpdateButton.Foreground = Brush(s.UpdateDue ? "#FFFFFF" : "#1F2933");
+        UpdateButton.ToolTip = (s.UpdateDue ? $"Windows hasn't been updated for {(s.DaysSinceUpdate is { } du ? $"{du} days" : "a while")}. " : "") +
+                               "Windows Update and Defender get internet (nothing else), NetGuard installs all updates, then shuts the PC down.";
+        if (s.UpdateAvailableVersion is { } av) VersionText.Text = $"Installed version: {GitHubReleases.CurrentVersion} – version {av} is available.";
+        InstallUpdateButton.IsEnabled = s.UpdateAvailableVersion != null;
         CountdownPanel.Visibility = s.TestDeadlineUtc != null ? Visibility.Visible : Visibility.Collapsed;
         WindowPanel.Visibility = s.WindowUntilUtc != null ? Visibility.Visible : Visibility.Collapsed;
         WindowLabel.Text = $"{s.WindowName} – time left";
@@ -217,8 +227,10 @@ public partial class MainWindow : Window
         var notices = new List<string>();
         notices.AddRange(s.RejectedFiles.Select(r => "⚠ Blocked because it changed or isn't genuine: " + r +
                                                      ". If it's a normal update: Programs → Re-approve (with normal internet or in Maintenance)."));
-        if (s.MaintenanceReminder)
-            notices.Add("🛠 No Maintenance for a while – Windows and Defender haven't been able to update. Consider a Maintenance unlock soon.");
+        if (s.UpdateDue && s.UpdatePhase == null)
+            notices.Add($"🛠 Windows hasn't been updated for {(s.DaysSinceUpdate is { } d2 ? $"{d2} days" : "a while")}. Next time you shut down, use \"Update & shut down\".");
+        if (s.PenaltyMinutesToday > 0)
+            notices.Add($"⏱ Tampering today extended your commitment by {Mins(s.PenaltyMinutesToday)}.");
         NoticeText.Text = string.Join("\n", notices);
         NoticeText.Visibility = notices.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
 
@@ -499,6 +511,13 @@ public partial class MainWindow : Window
         await RunAsync(_status.WindowName, new IpcRequest { Command = IpcCommands.WindowStart });
     }
 
+    private async void OnUpdatesStart(object sender, RoutedEventArgs e)
+    {
+        var shutdown = Dialogs.AskUpdateAndShutdown(this);
+        if (shutdown == null) return;
+        await RunAsync("Update & shut down", new IpcRequest { Command = IpcCommands.UpdatesStart, On = shutdown });
+    }
+
     private async void OnWindowEnd(object sender, RoutedEventArgs e) =>
         await RunAsync("Close", new IpcRequest { Command = IpcCommands.WindowEnd });
 
@@ -599,28 +618,13 @@ public partial class MainWindow : Window
         _ = RefreshStatusAsync();
     }
 
-    private async void OnCheckUpdate(object sender, RoutedEventArgs e)
-    {
-        InstallUpdateButton.IsEnabled = false;
-        try
-        {
-            _latest = await Updater.CheckLatestAsync();
-            var current = GitHubReleases.CurrentVersion;
-            if (_latest.Version <= current) ShowMessage($"You have the newest version ({current}).", ok: true);
-            else
-            {
-                ShowMessage($"Version {_latest.Version} is available (you have {current}).", ok: true, sticky: true);
-                InstallUpdateButton.IsEnabled = true;
-                VersionText.Text = $"Installed version: {current} – version {_latest.Version} is available.";
-            }
-        }
-        catch (Exception ex) { ShowMessage("Couldn't check for updates: " + ex.Message, ok: false); }
-    }
+    private async void OnCheckUpdate(object sender, RoutedEventArgs e) =>
+        await RunAsync("Check for updates", new IpcRequest { Command = IpcCommands.UpdateCheck }); // the service checks – it may reach GitHub in any profile
 
     private async void OnInstallUpdate(object sender, RoutedEventArgs e)
     {
-        if (_latest == null) return;
-        if (MessageBox.Show(this, $"Install version {_latest.Version}?\n\nThe NetGuard service downloads and installs it. NetGuard closes; open it again in about a minute.",
+        if (_status?.UpdateAvailableVersion is not { } version) return;
+        if (MessageBox.Show(this, $"Install version {version}?\n\nThe NetGuard service downloads and installs it. NetGuard closes; open it again in about a minute.",
                 "Update", MessageBoxButton.OKCancel, MessageBoxImage.Question) != MessageBoxResult.OK)
             return;
         InstallUpdateButton.IsEnabled = false;

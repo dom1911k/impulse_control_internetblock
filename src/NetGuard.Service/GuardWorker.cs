@@ -24,6 +24,7 @@ public sealed class GuardWorker : BackgroundService
 
     protected override async Task ExecuteAsync(CancellationToken ct)
     {
+        _guard.OnServiceStart();
         _guard.Protect();
         _guard.Engine.Log.Append(LogTypes.ServiceStarted, new { version = GitHubReleases.CurrentVersion.ToString() }, "NetGuard service");
         var lastProtect = DateTime.UtcNow;
@@ -33,6 +34,7 @@ public sealed class GuardWorker : BackgroundService
         while (!ct.IsCancellationRequested)
         {
             await Task.Run(_guard.Tick, ct);
+            _ = Task.Run(_guard.DailyUpdateCheck, ct);
             if (DateTime.UtcNow - lastProtect > TimeSpan.FromMinutes(5))
             {
                 await Task.Run(_guard.Protect, ct);
@@ -54,6 +56,7 @@ public sealed class GuardWorker : BackgroundService
     public override async Task StopAsync(CancellationToken ct)
     {
         try { _guard.Engine.Log.Append(LogTypes.ServiceStopped, new { reason = "service stopped" }, "NetGuard service"); } catch { }
+        _guard.OnServiceStop();
         await base.StopAsync(ct);
     }
 }
